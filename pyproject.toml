@@ -2,7 +2,7 @@
 # --- Build system configuration
 
 [build-system]
-requires = [ "setuptools>=41", ]
+requires = [ "setuptools>=61", "setuptools_scm[toml]>=8", ]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
@@ -15,7 +15,7 @@ where = ["src"]
 
 [project]
 name = "stooge"
-version = "0.1.0"
+dynamic = ["version"]
 
 authors = [
   { name="Derrick Chambers", email="chambers.ja.derrick@gmail.com" },
@@ -74,3 +74,5 @@ markers = [
 [tool.ruff]
 line-length = 88
 target-version = "py313"
+
+[tool.setuptools_scm]

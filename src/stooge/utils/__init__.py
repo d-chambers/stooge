@@ -155,7 +155,8 @@ def ensure_spf_project(project_path: Union[str, Path]) -> Path:
     path = path_or_cwd(project_path)
     if not path.exists():
         msg = (
-            f"{path.parent} is not yet an " f"stooge project. Try running `stooge init`."
+            f"{path.parent} is not yet an "
+            f"stooge project. Try running `stooge init`."
         )
         raise SPFInitError(msg)
     return path

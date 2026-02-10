@@ -1,16 +1,17 @@
 """
 Read/write support for project structure.
 """
-from pathlib import Path
-from dataclasses import dataclass
-
 import tomllib
+from dataclasses import dataclass
+from pathlib import Path
+
 
 def _get_mtimes(files_or_folders) -> tuple[list[float], list[float]]:
     """
     Get timestamps for files or folders.
     If a folder, find the most recent mtime, including files and folders inside.
     """
+
     def _get_min_max(entry):
         path = Path(entry)
         if path.is_file():
@@ -19,7 +20,7 @@ def _get_mtimes(files_or_folders) -> tuple[list[float], list[float]]:
         time = path.stat().st_mtime
         min_time, max_time = time, time
         # iterate through contents, update min/max times.
-        for sub in path.rglob('*'):
+        for sub in path.rglob("*"):
             subtime = sub.stat().st_mtime
             if subtime < min_time:
                 min_time = subtime
@@ -35,11 +36,9 @@ def _get_mtimes(files_or_folders) -> tuple[list[float], list[float]]:
     return min_times, max_times
 
 
-            
-
-
 class Project(dataclass):
     """A class to encapsulate information about a project."""
+
     # A dict that contains the direct dependencies from one ID to another.
     dependencies: dict[str, tuple[str, ...]]
     # A mapping from an ID to the path (relative to project directory)
@@ -64,9 +63,8 @@ class Project(dataclass):
         outputs = {}
         if (tomal_path := path / cls._toml_name).exists():
             tom = tomllib.load(tomal_path)
-            outputs['backend'] = tom['backend']
+            outputs["backend"] = tom["backend"]
         # Next actually parse structure.
-
 
 
 def _read_dependencies():

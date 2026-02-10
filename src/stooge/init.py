@@ -9,7 +9,9 @@ import stooge
 from stooge.meta import write_metadata
 
 
-def _init_directory(template_directory: Path, output_directory: Path, data: dict) -> None:
+def _init_directory(
+    template_directory: Path, output_directory: Path, data: dict
+) -> None:
     """Render each template file into the output directory."""
     for path in Path(template_directory).rglob("*"):
         if path.is_dir():
