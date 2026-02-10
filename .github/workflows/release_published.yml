@@ -1,37 +1,31 @@
+# A workflow to publish release to pypi.
 name: release
+
 on:
   release:
     types:
       - published
 
 jobs:
-  publish_package:
+  pypi_publish:
+    name: Upload release to PyPI
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/stooge
+    permissions:
+      id-token: write # IMPORTANT: required for trusted publishing
 
     steps:
-      - uses: actions/checkout@v1
-
-      - name: Setup conda
-        uses: conda-incubator/setup-miniconda@v2
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          miniconda-version: 'latest'
           python-version: "3.13"
-          activate-environment: test
-          environment-file: .github/test_conda_env.yml
-          condarc-file: .github/test_condarc.yml
-
-      - name: install
-        shell: bash -l {0}
+      - name: Build distributions
         run: |
-          pip install -e .[dev]
-
-      - name: create dists
-        shell: bash -l {0}
-        run: |
-          python -m pip install build
+          python -m pip install --upgrade pip build
           python -m build
 
-      - name: publish package
+      - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_TOKEN }}
