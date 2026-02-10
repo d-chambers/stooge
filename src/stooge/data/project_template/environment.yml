@@ -1,0 +1,8 @@
+name: {{ project_name }}
+channels:
+  - conda-forge
+  - defaults
+dependencies:  # conda deps go here.
+  - python=3.9
+  - pip:  # Anything that can't be installed with conda goes here.
+      - pdbpp

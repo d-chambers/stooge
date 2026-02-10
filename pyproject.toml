@@ -1,0 +1,76 @@
+
+# --- Build system configuration
+
+[build-system]
+requires = [ "setuptools>=41", ]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# --- Project Metadata
+
+[project]
+name = "stooge"
+version = "0.1.0"
+
+authors = [
+  { name="Derrick Chambers", email="chambers.ja.derrick@gmail.com" },
+]
+
+description = "A simple project framework to keep you from getting burned"
+readme = "README.md"
+license = { file="LICENSE" }
+requires-python = ">=3.13"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+]
+
+keywords = ["workflow", "projects"]
+
+# --- Dependencies
+
+dependencies = [
+    "typer",
+    "rich",
+    "jinja2",
+    "toml",
+    "pdbpp>=0.12.0.post1",
+]
+
+[project.optional-dependencies]
+
+test = [
+    "pytest",
+    "pre-commit",
+    "ruff",
+    "scikit-learn",
+]
+dev = ["stooge[test]"]
+
+[project.scripts]
+stooge = "stooge.cli:app"
+
+# --- URLs for project
+
+[project.urls]
+"Bug Tracker" = "https://github.com/d-chambers/stooge/issues"
+"Documentation" = "https://github.com/d-chambers/stooge"
+"Homepage" = "https://github.com/d-chambers/stooge"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: tests that run very slowly, skipped by default",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
