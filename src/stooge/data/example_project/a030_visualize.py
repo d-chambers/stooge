@@ -1,6 +1,7 @@
 """
 Script to create simple visualizations of earthquake data.
 """
+
 import local
 import matplotlib.pyplot as plt
 import pandas as pd

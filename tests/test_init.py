@@ -23,7 +23,13 @@ class TestBasicInit:
 
     def test_expected_files_exist(self, basic_spf):
         """Ensure the expected files exist."""
-        template_names = {x.name for x in stooge._template_path.rglob("*")}
+        template_names = {
+            x.name
+            for x in stooge._template_path.rglob("*")
+            if x.is_file()
+            and "__pycache__" not in x.parts
+            and x.suffix not in {".pyc", ".pyo"}
+        }
         output_names = {x.name for x in basic_spf.rglob("*")}
         assert output_names.issuperset(template_names)
 
@@ -48,10 +54,12 @@ class TestBasicInit:
         new_mtime = local.stat().st_mtime
         assert current_mtime == new_mtime
 
-    def test_spf_directory_exists(self, basic_spf):
-        """The stooge directory, which contains stooge metadata, should exist."""
-        from stooge.meta import METADATA_DIRECTORY_NAME, METADATA_FILE_NAME
+    def test_manifest_exists(self, basic_spf):
+        """Initialization writes the canonical root manifest."""
+        assert (basic_spf / ".stooge.toml").is_file()
+        assert not (basic_spf / ".stooge").exists()
 
-        expected_path = basic_spf / METADATA_DIRECTORY_NAME
-        assert expected_path.exists()
-        assert (expected_path / METADATA_FILE_NAME).exists()
+    def test_python_backend_omits_uv_project(self, tmp_path):
+        """Python projects do not receive an unnecessary uv manifest."""
+        project = stooge.init(tmp_path / "python_project", backend="python")
+        assert not (project / "pyproject.toml").exists()

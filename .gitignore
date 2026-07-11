@@ -73,4 +73,6 @@ target/
 .DS_store*
 
 # Uv stuff
-uv.lock
+
+# local scratch notes
+.scratch/

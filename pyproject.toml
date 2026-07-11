@@ -2,7 +2,7 @@
 # --- Build system configuration
 
 [build-system]
-requires = [ "setuptools>=61", "setuptools_scm[toml]>=8", ]
+requires = [ "setuptools>=77", "setuptools_scm[toml]>=8", ]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
@@ -10,6 +10,17 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+stooge = [
+    "data/project_template/.gitignore",
+    "data/project_template/*.md",
+    "data/project_template/*.py",
+    "data/project_template/*.toml",
+    "data/project_template/inputs/.gitinclude",
+    "data/example_project/*.py",
+    "data/example_project/inputs/*.csv",
+]
 
 # --- Project Metadata
 
@@ -23,11 +34,12 @@ authors = [
 
 description = "A simple project framework to keep you from getting burned"
 readme = "README.md"
-license = { file="LICENSE" }
-requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
 classifiers = [
     "Development Status :: 4 - Beta",
-    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
@@ -39,10 +51,8 @@ keywords = ["workflow", "projects"]
 
 dependencies = [
     "typer",
-    "rich",
     "jinja2",
-    "toml",
-    "pdbpp>=0.12.0.post1",
+    "tomli-w",
 ]
 
 [project.optional-dependencies]
@@ -51,7 +61,6 @@ test = [
     "pytest",
     "pre-commit",
     "ruff",
-    "scikit-learn",
 ]
 dev = ["stooge[test]"]
 
@@ -73,6 +82,6 @@ markers = [
 
 [tool.ruff]
 line-length = 88
-target-version = "py313"
+target-version = "py312"
 
 [tool.setuptools_scm]

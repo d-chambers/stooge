@@ -1,4 +1,4 @@
-------- sprof specfic ignores
+# Stooge-specific ignores
 
 # ignore all outputs
 outputs/*
@@ -6,7 +6,7 @@ outputs/*
 # You may also want to add large input files to this
 
 
-# ------ Genral python ingores
+# General Python ignores
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -19,6 +19,7 @@ __pycache__/
 # Distribution / packaging
 .Python
 env/
+.venv/
 build/
 develop-eggs/
 dist/

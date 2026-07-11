@@ -1,38 +1,19 @@
 """
 # {{ project_name }}
 
-#### {Insert description of project} ####
+Stooge reads this file statically. Define paths using ``Path`` string literals,
+``Path(__file__).parent``, aliases, and ``/`` joins with string literals only.
+Keep this file free of side effects and project-module imports.
 """
+
 from pathlib import Path
 
-# --- Project functions
-# These are used in more than one script. Consider creating a separate utils
-# module if this section gets too large. However, never import any project
-# modules in local.py.
-
-
-def ensure_folder_exists(path: Path) -> Path:
-    """
-    Given a path to a directory, ensure the directory exists.
-
-    Returns a path to said directory.
-    """
-    path = Path(path)
-    path.mkdir(exist_ok=True, parents=True)
-    return path
-
-
-# --- Project Parameters
-
-# The base path for this project
+# The base path for this project.
 project_path = Path(__file__).parent
 
-# --- Inputs to project
+# External inputs to the project.
+input_path = project_path / "inputs"
 
-input_path = ensure_folder_exists(project_path / "inputs")
-
-# --- Outputs produced by project
-
-# outputs should have the same prefix as the script which creates them (eg a010)
-
-output_path = ensure_folder_exists(project_path / "outputs")
+# Outputs produced by project tasks.
+output_path = project_path / "outputs"
+a010_first_output = output_path / "a010_first_output.txt"

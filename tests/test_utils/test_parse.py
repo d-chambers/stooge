@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from stooge.utils.parse import build_dependency_graph, parse_local, parse_script
+from stooge.exceptions import StoogeParseError
+from stooge.utils.parse import parse_local, parse_script
 
 
 @pytest.fixture
@@ -16,7 +17,7 @@ def local_project(tmp_path):
         "project_path = Path(__file__).parent\n"
         "input_path = project_path / 'inputs'\n"
         "output_path = project_path / 'outputs'\n"
-        "earthquake_csv = input_path / 'bingham_earthquakes.csv'\n"
+        "earthquake_csv = input_path / 'earthquakes.csv'\n"
         "cleaned_csv = output_path / 'a010_cleaned_earthquakes.csv'\n"
         "a010_named_output = output_path / 'custom_name.csv'\n"
         "calc_csv = output_path / 'a020_calculated_earthquakes.csv'\n"
@@ -31,9 +32,10 @@ class TestParseLocal:
         """Parse `Path` variables from a project directory."""
         out = parse_local(local_project)
 
-        assert "project_path" in out
-        assert "input_path" in out
-        assert "output_path" in out
+        assert out["project_path"] == Path(".")
+        assert out["input_path"] == Path("inputs")
+        assert out["output_path"] == Path("outputs")
+        assert out["earthquake_csv"] == Path("inputs/earthquakes.csv")
         assert all(isinstance(value, Path) for value in out.values())
 
     def test_parse_local_from_local_file_path(self, local_project):
@@ -47,6 +49,60 @@ class TestParseLocal:
         """Raise when local.py cannot be found."""
         with pytest.raises(FileNotFoundError, match="Cannot find local.py"):
             _ = parse_local(tmp_path / "not_local.py")
+
+    def test_supports_literals_aliases_and_parent_chains(self, tmp_path):
+        """Evaluate every expression in the static local.py contract."""
+        (tmp_path / "local.py").write_text(
+            "from pathlib import Path\n"
+            "root = Path(__file__).parent\n"
+            "parent = Path(__file__).parent.parent\n"
+            "relative = Path('inputs')\n"
+            "alias = relative\n"
+            "joined = alias / 'nested' / 'data.csv'\n"
+        )
+        out = parse_local(tmp_path)
+        assert out["root"] == Path(".")
+        assert out["parent"] == tmp_path.parent
+        assert out["alias"] == Path("inputs")
+        assert out["joined"] == Path("inputs/nested/data.csv")
+
+    def test_ignores_non_path_assignments_and_definitions(self, tmp_path):
+        """Ignore constants and definitions that cannot describe artifacts."""
+        (tmp_path / "local.py").write_text(
+            "from pathlib import Path\n"
+            "count = 3\n"
+            "label = 'research'\n"
+            "def helper():\n    return 1\n"
+            "root = Path(__file__).parent\n"
+        )
+        assert parse_local(tmp_path) == {"root": Path(".")}
+
+    def test_rejects_dynamic_path_expressions(self, tmp_path):
+        """Reject calls that attempt to calculate or mutate declared paths."""
+        (tmp_path / "local.py").write_text(
+            "from pathlib import Path\n"
+            "root = Path(__file__).parent\n"
+            "outputs = ensure_folder_exists(root / 'outputs')\n"
+        )
+        with pytest.raises(StoogeParseError, match="function calls other than Path"):
+            parse_local(tmp_path)
+
+    def test_overrides_replace_base_and_derived_values(self, local_project):
+        """Bind overridden names and recompute variables derived from them."""
+        out = parse_local(
+            local_project, overrides={"output_path": Path("/tmp/stooge_dbg")}
+        )
+        assert out["output_path"] == Path("/tmp/stooge_dbg")
+        assert out["cleaned_csv"] == Path(
+            "/tmp/stooge_dbg/a010_cleaned_earthquakes.csv"
+        )
+        # Variables not derived from the override are unchanged.
+        assert out["earthquake_csv"] == Path("inputs/earthquakes.csv")
+
+    def test_unknown_override_name_raises_with_available(self, local_project):
+        """List available variable names when an override cannot bind."""
+        with pytest.raises(StoogeParseError, match="bogus.*available.*output_path"):
+            parse_local(local_project, overrides={"bogus": Path("/tmp/x")})
 
 
 class TestParseScript:
@@ -64,42 +120,26 @@ class TestParseScript:
 
         out = parse_script(script_path, param_dict)
 
-        assert out == {"inputs": {"earthquake_csv"}, "outputs": {"cleaned_csv"}}
+        assert out == {
+            "inputs": {Path("inputs/earthquakes.csv")},
+            "outputs": {Path("outputs/a010_cleaned_earthquakes.csv")},
+        }
 
 
-class TestBuildDependencyGraph:
-    """Tests for deriving script dependency graph from local vars."""
-
-    def test_build_dependency_graph(self, local_project):
-        """Build {task_id: [dependent_ids...]} from script/local relationships."""
-        (local_project / "a010_clean.py").write_text(
-            "import local\n" "x = local.earthquake_csv\n" "y = local.cleaned_csv\n"
-        )
-        (local_project / "a020_calc.py").write_text(
-            "from local import cleaned_csv, calc_csv\n"
-            "x = cleaned_csv\n"
-            "y = calc_csv\n"
-        )
-        (local_project / "a030_plot.py").write_text(
-            "from local import calc_csv\n" "x = calc_csv\n"
-        )
-        (local_project / "notes.py").write_text("x = 1\n")
-
-        out = build_dependency_graph(local_project)
-
-        assert out == {"a010": ["a020"], "a020": ["a030"], "a030": []}
+class TestParseScriptImports:
+    """Tests for deriving artifact use from supported import forms."""
 
     def test_parse_script_uses_variable_name_for_output(self, tmp_path, local_project):
         """Treat vars prefixed with script id as outputs even if path name is not."""
         script_path = tmp_path / "a010_example.py"
         script_path.write_text(
-            "from local import a010_named_output\n" "out_path = a010_named_output\n"
+            "from local import a010_named_output\nout_path = a010_named_output\n"
         )
         param_dict = parse_local(local_project)
 
         out = parse_script(script_path, param_dict)
 
-        assert out == {"inputs": set(), "outputs": {"a010_named_output"}}
+        assert out == {"inputs": set(), "outputs": {Path("outputs/custom_name.csv")}}
 
     def test_parse_script_from_local_import(self, tmp_path, local_project):
         """Parse local usage from `from local import var` style imports."""
@@ -113,18 +153,22 @@ class TestBuildDependencyGraph:
 
         out = parse_script(script_path, param_dict)
 
-        assert out == {"inputs": {"earthquake_csv"}, "outputs": {"cleaned_csv"}}
+        assert out == {
+            "inputs": {Path("inputs/earthquakes.csv")},
+            "outputs": {Path("outputs/a010_cleaned_earthquakes.csv")},
+        }
 
     def test_parse_script_from_local_star_import(self, tmp_path, local_project):
         """Parse local usage from `from local import *` style imports."""
         script_path = tmp_path / "a010_example.py"
         script_path.write_text(
-            "from local import *\n"
-            "in_path = earthquake_csv\n"
-            "out_path = cleaned_csv\n"
+            "from local import *\nin_path = earthquake_csv\nout_path = cleaned_csv\n"
         )
         param_dict = parse_local(local_project)
 
         out = parse_script(script_path, param_dict)
 
-        assert out == {"inputs": {"earthquake_csv"}, "outputs": {"cleaned_csv"}}
+        assert out == {
+            "inputs": {Path("inputs/earthquakes.csv")},
+            "outputs": {Path("outputs/a010_cleaned_earthquakes.csv")},
+        }

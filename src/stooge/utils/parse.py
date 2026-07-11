@@ -1,73 +1,102 @@
 """
 Utilities for parsing files dependencies.
 """
+
 import ast
-import importlib.util
-from collections import defaultdict
 from pathlib import Path
-from types import ModuleType
 from typing import Mapping
 
-from stooge.constants import local_path
+from stooge.exceptions import StoogeParseError
 
 
-def _load_module_from_path(path: Path) -> ModuleType:
-    """Load and return a module object from a python file path."""
-    spec = importlib.util.spec_from_file_location("local", str(path))
-    if spec is None or spec.loader is None:
-        raise ValueError(f"Could not load module from '{path}'")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def parse_local(path: Path) -> dict[str, Path]:
+def parse_local(
+    path: Path, overrides: Mapping[str, Path] | None = None
+) -> dict[str, Path]:
     """
-    Parse path variables from a project's ``local.py`` module.
+    Statically parse path variables from a project's ``local.py`` module.
 
     Parameters
     ----------
     path
         Either the path to ``local.py`` or the project directory that
         contains ``local.py``.
+    overrides
+        Optional mapping of variable name to replacement path. Overridden
+        names are bound to the replacement value instead of their assigned
+        expression, so later variables derived from them follow the override.
 
     Returns
     -------
     dict[str, Path]
-        Mapping of variable name to ``Path`` value for top-level variables
-        in ``local.py`` that are ``Path`` instances.
+        Mapping of variable name to normalized ``Path`` values. Supported
+        expressions are ``Path`` construction, ``.parent``, path joins using
+        string literals, and aliases of earlier path variables.
 
     Raises
     ------
     FileNotFoundError
         If ``local.py`` cannot be found.
-    ValueError
-        If a ``local.py`` module cannot be loaded from the given path.
+    StoogeParseError
+        If a path assignment uses an unsupported expression, or an override
+        names a variable that ``local.py`` never assigns.
     """
     local_path = Path(path)
+    project_path = local_path if local_path.is_dir() else local_path.parent
     if local_path.is_dir():
         local_path = local_path / "local.py"
     if not local_path.exists():
         raise FileNotFoundError(f"Cannot find local.py at '{local_path}'")
 
-    local_module = _load_module_from_path(local_path)
+    try:
+        tree = ast.parse(local_path.read_text(), filename=str(local_path))
+    except SyntaxError as exc:
+        raise StoogeParseError(f"Cannot parse local.py: {exc}") from exc
+
+    overrides = dict(overrides or {})
     out: dict[str, Path] = {}
-    for name in dir(local_module):
-        if name.startswith("_"):
+    for statement in tree.body:
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
             continue
-        value = getattr(local_module, name)
-        if isinstance(value, Path):
-            out[name] = value
+        target = statement.targets[0]
+        if not isinstance(target, ast.Name) or target.id.startswith("_"):
+            continue
+        if target.id in overrides:
+            out[target.id] = _normalize_project_path(
+                overrides[target.id], project_path.resolve()
+            )
+            continue
+        try:
+            value = _evaluate_path_expression(
+                statement.value,
+                known_paths=out,
+                local_file=local_path.resolve(),
+            )
+        except StoogeParseError as exc:
+            raise StoogeParseError(
+                f"Unsupported local.py path expression for '{target.id}' "
+                f"on line {statement.lineno}: {exc}"
+            ) from exc
+        if value is not None:
+            out[target.id] = _normalize_project_path(value, project_path.resolve())
+
+    unknown = sorted(set(overrides) - set(out))
+    if unknown:
+        available = ", ".join(sorted(out))
+        raise StoogeParseError(
+            f"Unknown local variable(s) {', '.join(unknown)}; available: {available}"
+        )
     return out
 
 
-def parse_script(path: Path, param_dict: Mapping[str, Path]) -> dict[str, set[str]]:
+def parse_script(
+    script_path: Path, param_dict: Mapping[str, Path]
+) -> dict[str, set[Path]]:
     """
     Parse script usage of ``local`` variables into inputs and outputs.
 
     Parameters
     ----------
-    path
+    script_path
         Path to the script file to parse.
     param_dict
         Mapping of ``local`` variable name to path, typically from
@@ -85,16 +114,16 @@ def parse_script(path: Path, param_dict: Mapping[str, Path]) -> dict[str, set[st
 
     Returns
     -------
-    dict[str, set[str]]
+    dict[str, set[Path]]
         Dictionary with keys ``inputs`` and ``outputs`` containing sets of
-        variable names used by the script. Output variables are those whose
+        project-relative paths used by the script. Output paths are those whose
         variable name or artifact file name starts with the script prefix
         (for example ``a010``).
     """
-    script_path = Path(path)
+    script_path = Path(script_path)
     tree = ast.parse(script_path.read_text())
     local_names = set(param_dict)
-    script_prefix = script_path.name.split("_")[0]
+    script_prefix = script_path.stem.split("_")[0]
 
     module_aliases, direct_imports, has_star_import = _collect_local_imports(tree)
     bound_names = _collect_bound_names(tree)
@@ -107,17 +136,103 @@ def parse_script(path: Path, param_dict: Mapping[str, Path]) -> dict[str, set[st
         bound_names=bound_names,
     )
 
-    inputs: set[str] = set()
-    outputs: set[str] = set()
-    for name in used_names:
-        file_name = Path(param_dict[name]).name
-        is_output_name = name.startswith(script_prefix)
-        is_output_path = file_name.startswith(script_prefix)
+    inputs: set[Path] = set()
+    outputs: set[Path] = set()
+    for var_name in used_names:
+        file_path = Path(param_dict[var_name])
+        is_output_name = var_name.startswith(script_prefix)
+        is_output_path = file_path.name.startswith(script_prefix)
         if is_output_name or is_output_path:
-            outputs.add(name)
+            outputs.add(file_path)
         else:
-            inputs.add(name)
+            inputs.add(file_path)
     return {"inputs": inputs, "outputs": outputs}
+
+
+def _normalize_project_path(path: Path, project_path: Path) -> Path:
+    """Return a path relative to the project when possible."""
+    path = Path(path)
+    project_path = Path(project_path)
+    if not path.is_absolute():
+        return path
+    try:
+        return path.relative_to(project_path)
+    except ValueError:
+        return path
+
+
+def _evaluate_path_expression(
+    node: ast.expr,
+    *,
+    known_paths: Mapping[str, Path],
+    local_file: Path,
+) -> Path | None:
+    """Evaluate one supported static path expression, or ignore non-path data."""
+    if isinstance(node, ast.Name):
+        if node.id in known_paths:
+            return known_paths[node.id]
+        if node.id == "__file__":
+            return local_file
+        return None
+
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        if node.func.id != "Path":
+            if _references_path_data(node, known_paths):
+                raise StoogeParseError(
+                    "function calls other than Path(...) are forbidden"
+                )
+            return None
+        if node.keywords or len(node.args) != 1:
+            raise StoogeParseError("Path(...) requires exactly one argument")
+        argument = node.args[0]
+        if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+            return Path(argument.value)
+        if isinstance(argument, ast.Name) and argument.id == "__file__":
+            return local_file
+        raise StoogeParseError("Path(...) accepts a string literal or __file__")
+
+    if isinstance(node, ast.Attribute) and node.attr == "parent":
+        base = _evaluate_path_expression(
+            node.value,
+            known_paths=known_paths,
+            local_file=local_file,
+        )
+        if base is None:
+            if _references_path_data(node, known_paths):
+                raise StoogeParseError(
+                    ".parent must follow a supported path expression"
+                )
+            return None
+        return base.parent
+
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        base = _evaluate_path_expression(
+            node.left,
+            known_paths=known_paths,
+            local_file=local_file,
+        )
+        if base is None:
+            if _references_path_data(node, known_paths):
+                raise StoogeParseError("path joins must start from a known path")
+            return None
+        if not isinstance(node.right, ast.Constant) or not isinstance(
+            node.right.value, str
+        ):
+            raise StoogeParseError("path joins require string literals")
+        return base / node.right.value
+
+    if _references_path_data(node, known_paths):
+        raise StoogeParseError("expression is not part of the static path contract")
+    return None
+
+
+def _references_path_data(node: ast.AST, known_paths: Mapping[str, Path]) -> bool:
+    """Return whether an expression appears intended to calculate a path."""
+    path_names = set(known_paths) | {"Path", "__file__"}
+    return any(
+        isinstance(child, ast.Name) and child.id in path_names
+        for child in ast.walk(node)
+    )
 
 
 def _collect_local_imports(
@@ -176,62 +291,3 @@ def _collect_local_usages(
             ):
                 used_names.add(node.id)
     return used_names
-
-
-def build_dependency_graph(
-    project_path: Path,
-) -> dict[str, list[str]]:
-    """
-    Build a script dependency graph for a project.
-
-    Parameters
-    ----------
-    project_path
-        Path to the project directory.
-
-    Returns
-    -------
-    dict[str, list[str]]
-        Mapping of ``{task_id: [dependent_task_id, ...]}`` where each key is
-        a script id and each value lists downstream scripts that depend on it.
-    """
-    project_path = Path(project_path)
-    local_vars = parse_local(project_path / local_path)
-
-    # Collect parsed local-variable usage for each task script.
-    script_vars: dict[str, dict[str, set[str]]] = {}
-    for script_path in sorted(project_path.glob("*.py")):
-        task_id = _get_task_id(script_path)
-        if task_id is None:
-            continue
-        script_vars[task_id] = parse_script(script_path, local_vars)
-
-    # Map output variable name -> producing task id.
-    producers: dict[str, set[str]] = defaultdict(set)
-    for task_id, var_map in script_vars.items():
-        for output_var in var_map["outputs"]:
-            producers[output_var].add(task_id)
-
-    # Build adjacency: upstream task -> dependent downstream tasks.
-    dependencies: dict[str, set[str]] = {task_id: set() for task_id in script_vars}
-    for task_id, var_map in script_vars.items():
-        upstream_ids = {
-            producer_id
-            for input_var in var_map["inputs"]
-            for producer_id in producers.get(input_var, set())
-            if producer_id != task_id
-        }
-        for upstream_id in upstream_ids:
-            dependencies[upstream_id].add(task_id)
-
-    return {task_id: sorted(dependents) for task_id, dependents in dependencies.items()}
-
-
-def _get_task_id(script_path: Path) -> str | None:
-    """Return task id from script name if it matches the task pattern."""
-    stem = script_path.stem
-    if len(stem) < 4:
-        return None
-    if not stem[0].isalpha() or not stem[1:4].isdigit():
-        return None
-    return stem.split("_")[0]

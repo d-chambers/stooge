@@ -8,9 +8,14 @@ from stooge.utils.dag import topological_sort
 class TestTopologicalSort:
     """Tests for topological sort of DAG task ids."""
 
-    def test_topological_sort_with_dependents_dict(self):
-        """Sort tasks when dependencies are {task_id: [dependent_id, ...]}."""
-        dependencies = {"a": ["b", "c"], "b": ["d"], "c": ["d"]}
+    def test_topological_sort_with_inputs_outputs_dict(self):
+        """Sort tasks when graph is modeled as node inputs/outputs."""
+        dependencies = {
+            "a": {"inputs": set(), "outputs": {"x"}},
+            "b": {"inputs": {"x"}, "outputs": {"y"}},
+            "c": {"inputs": {"x"}, "outputs": {"z"}},
+            "d": {"inputs": {"y", "z"}, "outputs": set()},
+        }
 
         order = topological_sort(dependencies)
 
@@ -19,18 +24,25 @@ class TestTopologicalSort:
         assert order.index("b") < order.index("d")
         assert order.index("c") < order.index("d")
 
-    def test_topological_sort_includes_dependents_not_in_keys(self):
-        """Include task ids that appear only as dependent values."""
-        dependencies = {"a": ["b"]}
+    def test_topological_sort_includes_independent_nodes(self):
+        """Include nodes that do not consume or produce shared artifacts."""
+        dependencies = {
+            "a": {"inputs": set(), "outputs": {"x"}},
+            "b": {"inputs": {"x"}, "outputs": set()},
+            "c": {"inputs": set(), "outputs": set()},
+        }
 
         order = topological_sort(dependencies)
 
-        assert set(order) == {"a", "b"}
+        assert set(order) == {"a", "b", "c"}
         assert order.index("a") < order.index("b")
 
     def test_topological_sort_raises_on_cycle(self):
-        """Raise when the dependency graph has a cycle."""
-        dependencies = {"a": ["b"], "b": ["a"]}
+        """Raise when inputs/outputs create a cycle between nodes."""
+        dependencies = {
+            "a": {"inputs": {"y"}, "outputs": {"x"}},
+            "b": {"inputs": {"x"}, "outputs": {"y"}},
+        }
 
         with pytest.raises(ValueError, match="Circular dependency detected"):
             _ = topological_sort(dependencies)
