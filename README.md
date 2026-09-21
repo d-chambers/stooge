@@ -26,8 +26,10 @@ Stooge reads `local.py` statically and never executes it. Its deliberately
 narrow contract supports top-level path assignments built from:
 
 - `Path("literal")` or `Path(__file__).parent`, including `.parent` chains;
-- an earlier path variable joined to string literals with `/`; and
+- an earlier path variable joined to string literals or other static paths with `/`; and
 - a simple alias of an earlier path variable.
+
+Private helpers such as `_base = Path(__file__).parent` can be used to derive public paths, including `_base.parent` and `_base / Path("data")`. Private names are excluded from artifact discovery and cannot be overridden with `--set`.
 
 Keep `local.py` free of side effects and project-module imports. Output parent
 directories are created immediately before their producing task runs.
