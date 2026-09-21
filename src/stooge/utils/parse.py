@@ -3,8 +3,8 @@ Utilities for parsing files dependencies.
 """
 
 import ast
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
 
 from stooge.exceptions import StoogeParseError
 
