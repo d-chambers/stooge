@@ -48,6 +48,29 @@ class TestProjectFromPath:
         project = Project.from_path(tmp_path, backend="python")
         assert project.tasks["a010"].outputs == (Path("outputs/result.txt"),)
 
+    def test_private_helpers_are_not_task_inputs(self, tmp_path):
+        """Discover public artifacts derived from a private project base."""
+        (tmp_path / "local.py").write_text(
+            "from pathlib import Path\n"
+            "_base = Path(__file__).parent\n"
+            "data_path = _base / Path('data')\n"
+            "das_data_path = _base.parent / 'recordings'\n"
+            "source_csv_path = _base / 'inputs' / 'sources'\n"
+            "a010_output = data_path / 'a010_output.h5'\n"
+        )
+        (tmp_path / "a010_extract.py").write_text(
+            "import local\n"
+            "print(local._base, local.das_data_path, local.source_csv_path)\n"
+            "print(local.a010_output)\n"
+        )
+        project = Project.from_path(tmp_path)
+        task = project.tasks["a010"]
+        assert set(task.inputs) == {
+            tmp_path.parent / "recordings",
+            Path("inputs/sources"),
+        }
+        assert task.outputs == (Path("data/a010_output.h5"),)
+
 
 class TestProjectOverrides:
     """Tests for ephemeral override-aware project models."""

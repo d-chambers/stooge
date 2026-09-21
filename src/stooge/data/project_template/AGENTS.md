@@ -4,8 +4,8 @@ This is a Stooge research project. Python scripts are pipeline tasks and also
 remain directly executable in task-ID order.
 
 - Name task scripts `a010_name.py`, `a020_name.py`, and so on.
-- Declare paths statically in `local.py`; allow only `Path` literals,
-  `Path(__file__).parent`, aliases, and `/` joins with string literals.
+- Declare paths statically in `local.py`; allow only `Path` literals, `Path(__file__).parent`, aliases, and `/` joins with string literals or other static paths.
+- Private path helpers such as `_base` may derive public paths, but are not tracked as artifacts or available through `--set`.
 - Keep `local.py` free of side effects and project-module imports.
 - An output's variable name or filename starts with its producing task ID.
   Other `local.py` paths referenced by that script are inputs.

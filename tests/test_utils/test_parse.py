@@ -66,6 +66,81 @@ class TestParseLocal:
         assert out["alias"] == Path("inputs")
         assert out["joined"] == Path("inputs/nested/data.csv")
 
+    @pytest.mark.parametrize("base_name", ["_base", "base"])
+    def test_base_helpers_preserve_parent_paths(self, tmp_path, base_name):
+        """Resolve helper parents before normalizing the returned artifact paths."""
+        (tmp_path / "local.py").write_text(
+            "from pathlib import Path\n"
+            f"{base_name} = Path(__file__).parent\n"
+            f"data_path = {base_name} / 'data'\n"
+            f"das_data_path = {base_name}.parent / 'recordings'\n"
+            "a010_output = data_path / 'a010_output.h5'\n"
+        )
+        out = parse_local(tmp_path)
+        assert out["data_path"] == Path("data")
+        assert out["das_data_path"] == tmp_path.parent / "recordings"
+        assert out["a010_output"] == Path("data/a010_output.h5")
+        assert (base_name in out) is (not base_name.startswith("_"))
+
+    @pytest.mark.parametrize("suffix", ["Path('data')", "_suffix"])
+    def test_path_joins_accept_static_path_operands(self, tmp_path, suffix):
+        """Allow Path literals and earlier path helpers on the right of a join."""
+        (tmp_path / "local.py").write_text(
+            "from pathlib import Path\n"
+            "_base = Path(__file__).parent\n"
+            "_suffix = Path('data')\n"
+            f"data_path = _base / {suffix}\n"
+        )
+        assert parse_local(tmp_path) == {"data_path": Path("data")}
+
+    def test_overrides_recompute_private_intermediates(self, tmp_path):
+        """Public overrides propagate through private aliases and parent access."""
+        (tmp_path / "local.py").write_text(
+            "from pathlib import Path\n"
+            "output_path = Path(__file__).parent / 'outputs'\n"
+            "_nested = output_path / Path('nested')\n"
+            "a010_output = _nested / 'result.txt'\n"
+            "parent = output_path.parent\n"
+        )
+        out = parse_local(tmp_path, overrides={"output_path": tmp_path})
+        assert out["a010_output"] == Path("nested/result.txt")
+        assert out["parent"] == tmp_path.parent
+        assert "_nested" not in out
+        with pytest.raises(StoogeParseError, match="Unknown local variable.*_nested"):
+            parse_local(tmp_path, overrides={"_nested": tmp_path})
+
+    @pytest.mark.parametrize("suffix", ["Path(name)", "Path('data').resolve()"])
+    def test_path_joins_still_reject_dynamic_operands(self, tmp_path, suffix):
+        """Supporting Path operands must not enable dynamic path evaluation."""
+        (tmp_path / "local.py").write_text(
+            "from pathlib import Path\n"
+            "_base = Path(__file__).parent\n"
+            f"data_path = _base / {suffix}\n"
+        )
+        with pytest.raises(StoogeParseError, match="Unsupported local.py"):
+            parse_local(tmp_path)
+
+    def test_ignores_unused_dynamic_private_values(self, tmp_path):
+        """Leave unrelated private expressions unevaluated and untracked."""
+        marker = tmp_path / "marker.txt"
+        (tmp_path / "local.py").write_text(
+            "from pathlib import Path\n"
+            "_unused = (Path(__file__).parent / 'marker.txt').write_text('bad')\n"
+            "a010_output = Path('outputs/result.txt')\n"
+        )
+        assert parse_local(tmp_path) == {"a010_output": Path("outputs/result.txt")}
+        assert not marker.exists()
+
+    def test_rejects_public_path_using_dynamic_private_helper(self, tmp_path):
+        """Report unsupported private helpers when a public path needs them."""
+        (tmp_path / "local.py").write_text(
+            "from pathlib import Path\n"
+            "_base = Path(__file__).resolve().parent\n"
+            "data_path = _base / 'data'\n"
+        )
+        with pytest.raises(StoogeParseError, match="'data_path' on line 3"):
+            parse_local(tmp_path)
+
     def test_ignores_non_path_assignments_and_definitions(self, tmp_path):
         """Ignore constants and definitions that cannot describe artifacts."""
         (tmp_path / "local.py").write_text(
