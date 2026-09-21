@@ -1,99 +1,131 @@
 # stooge
 
-A simple project framework.
+Stooge is a small CLI and Python framework for reproducible local research
+projects. It discovers dependencies between numbered scripts and runs only the
+tasks whose declared outputs are missing or stale.
 
-`stooge` enables reproducible development for local research projects, so you don't have to.
+Stooge requires Python 3.12 or newer. Supported execution backends are
+[uv](https://docs.astral.sh/uv/) and the current Python interpreter.
 
 ## Project structure
 
-stooge requires a specific project structure.
+Task scripts use canonical IDs such as `a010_clean.py` and
+`a020_calculate.py`. Paths are declared in `local.py`. A path is an output when
+its variable name or filename starts with the current script's task ID; other
+referenced paths are inputs.
 
-An example project directory looks like this:
-
-my_project
--> inputs/
----> some_file.csv
--> outputs/
--> local.py
--> environment.yml
--> a010_clean_data.py
--> a020_calculate.py
--> a030_visualize.py
-
-Each script has an ID (the part of the name before the first `_`).
-
-The file called `local.py` defines the inputs and outputs of the scripts. In this file, outputs are also given the same prefix.
-
-For example:
-
-```python
-from pathlib import Path
-
-input_path = Path("inputs")
-output_path = Path("outputs")
-
-raw_data_path = input_path / "raw data.csv"
-
-a010_clean_data_path = output_path / "a010_cleaned_outputs.csv"
-a020_calculated_data_path = output_path / "a020_calculated_results.csv"
-a030_result_plot = output_path / "a030_result_plot.png"
+```text
+my_project/
+├── inputs/raw.csv
+├── local.py
+├── a010_clean.py
+└── a020_calculate.py
 ```
 
-This provides stooge with all the required information to figure out the relationships between scripts and their outputs.
+Stooge reads `local.py` statically and never executes it. Its deliberately
+narrow contract supports top-level path assignments built from:
 
-## Init
-Creates a stooge project skeleton.
+- `Path("literal")` or `Path(__file__).parent`, including `.parent` chains;
+- an earlier path variable joined to string literals with `/`; and
+- a simple alias of an earlier path variable.
 
-This provides a small Rich interface to get information about the project name and backend, or they can be provided via command-line flags.
+Keep `local.py` free of side effects and project-module imports. Output parent
+directories are created immediately before their producing task runs.
 
-Supported backends are:
-- [uv](https://docs.astral.sh/uv/)
-- [miniforge](https://github.com/conda-forge/miniforge)
-- [marimo](https://marimo.io/)
-- python (use system python or provided interpreter path)
+Parsing produces a deterministic `.stooge.toml` containing the backend, source
+hashes, artifact paths, and direct task dependencies. Generated projects also
+include a short `AGENTS.md` with these conventions.
+
+## Initialize, parse, and inspect
+
+The uv backend is the default and includes a minimal `pyproject.toml`.
 
 ```bash
-stooge init test_project --backend uv
+stooge init my_project --backend uv
+stooge parse my_project
+stooge parse my_project --dry-run
+stooge info my_project
+stooge info my_project --json
 ```
 
-## Run
+Use `--backend python` to run tasks with the interpreter that launched Stooge.
+`info` is read-only and can inspect a project before its manifest exists.
 
-`stooge run` runs the entire project up to and including a target ID. It automatically calculates stale or missing results that `a030` depends on.
+Parsing rejects dynamic path expressions, duplicate task IDs, duplicate output
+producers, dependency cycles, tasks without outputs, and outputs outside the
+project root.
 
-For example:
+## Plan and run
+
+Commands accept an optional project path, so changing directories is not
+required:
 
 ```bash
-stooge run a030
+stooge run a030 my_project --dry-run
+stooge run a030 my_project
+stooge run a030 my_project --json
 ```
 
-This first gets the directed acyclic graph (DAG) that defines `a030`'s dependencies. It then uses file output mtime values to determine if any results need to be re-run. This includes:
+A task is stale when an output is missing, its script content hash changed, or
+its newest input is newer than its oldest output. Script mtimes alone do not
+trigger work. A `local.py` edit only rebuilds tasks whose parsed definitions
+change. When an upstream task runs, affected downstream tasks are rebuilt.
 
-- Requiring that, for a given output, all dependency outputs have an mtime less than or equal to the current output.
-- Requiring all outputs to have an mtime greater than or equal to the script that creates them.
+- `--dry-run` reports the ordered plan and a reason for each task without
+  writing the manifest or outputs.
+- `--force` always reruns the target in addition to stale dependencies.
+- `--force-all` reruns the target's entire upstream closure.
+- `--debug` executes selected scripts under the standard-library debugger.
 
-Flags include:
-- `--force`: rerun the specified task.
-- `--force-all`: rerun all affected tasks.
-- `--debug`: If true, drop into a pdb debugger on failure.
+### Override local paths for one run
 
-## Remove
-
-Remove results from specified tasks.
+For debugging, `run` can temporarily swap `local.py` path values without editing any project file:
 
 ```bash
-stooge remove a020  # removes the results for a020
+stooge run a030 my_project --set output_path=/tmp/stooge_debug --dry-run --json
+stooge run a030 my_project --set output_path=/tmp/stooge_debug --set input_path=alt_inputs
+stooge run a030 my_project --local-file debug_local.py
 ```
 
-## Parse
+- `--set name=path` is repeatable. Relative paths resolve against the project root. Unknown names fail with the list of available variables.
+- `--local-file` points at a python file following the same static contract as `local.py`. Variables matching names in `local.py` become overrides; other variables are helpers and are ignored. `--set` wins on conflicts.
+- Derived variables are recomputed: overriding `output_path` also moves every path defined from it (e.g. `a030_result = output_path / "result.png"`), both when planning and inside the executing script.
+- Overridden runs are **ephemeral**: the manifest is never written, no execution fingerprints are recorded, and fingerprint-based staleness is skipped (plans rest on missing outputs and mtimes at the overridden locations). A later plain `stooge run` behaves as if the overridden run never happened.
+- Overridden outputs may resolve outside the project root (e.g. `/tmp`).
+- Works with `--dry-run`, `--json`, and `--debug`.
 
-Although typically called automatically by other commands, it can be used manually to parse script structure/dependencies and update timestamps.
+## Remove outputs
+
+Remove or preview only the outputs declared by one task:
 
 ```bash
-stooge parse  # parse current directory, or pass a path
+stooge remove a020 my_project --dry-run
+stooge remove a020 my_project
+stooge remove a020 my_project --json
 ```
 
-The flag `--dryrun` can be used to simply validate the project structure.
+Downstream results are retained and rebuilt when required by a later run.
+Files, symlinks, and output directories are supported. Stooge refuses to
+remove the project root or paths outside it.
 
+## JSON output
 
-# Guiding principles
-- `stooge` is always optional. A project can be fully executed by running the scripts in order. It is there when you want it, and it gets out of your way when you don't.
+Every command except `version` accepts `--json`. The envelopes are a stable contract for scripts and agents:
+
+- Success: `{"command": "<name>", "ok": true, ...}` with command-specific fields.
+- Failure: `{"command": "<name>", "ok": false, "kind": "<kind>", "error": "<message>"}` written to stdout with exit status 1. `kind` is one of `parse_error`, `task_not_found`, `run_error`, `init_error`, or `error`, so callers can branch without parsing the message.
+- When `run` fails partway through a plan, the failure envelope also includes `executed`: the task IDs that completed (and were recorded in the manifest) before the failure.
+- `run --dry-run` never fails on a missing raw input; the plan reports it as a `missing_input` reason so a build can always be previewed.
+- When `--set`/`--local-file` overrides are active, `run` envelopes include `"overrides": {name: path}` and `"ephemeral": true`.
+
+## Development
+
+```bash
+pip install -e '.[test]'
+pytest
+ruff check .
+ruff format --check .
+```
+
+Stooge is optional by design: scripts remain directly executable in task-ID
+order. The supported Python API is listed in `stooge.__all__`.

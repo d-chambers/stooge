@@ -1,6 +1,7 @@
 """
 This script simply adds a column to the dataframe.
 """
+
 import local
 import pandas as pd
 
@@ -10,7 +11,7 @@ def add_summary_string(df):
 
     def _get_summary_str(ser):
         time_str = str(ser["time"])[:19]
-        depth_str = f"Depth={ser['depth']/1_000}km"
+        depth_str = f"Depth={ser['depth'] / 1_000}km"
         mag_str = f"ML={ser['magnitude']:02f}"
         out = f"{time_str}  {depth_str}  {mag_str}"
         return out

@@ -18,4 +18,6 @@ def clean_earthquake_df(df):
 if __name__ == "__main__":
     df = pd.read_csv(earthquake_csv)
     out = clean_earthquake_df(df)
+    # Keep direct task execution working in a fresh clone.
+    cleaned_csv.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(cleaned_csv, index=False)
