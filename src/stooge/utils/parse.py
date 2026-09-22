@@ -118,7 +118,7 @@ def parse_script(
         Dictionary with keys ``inputs`` and ``outputs`` containing sets of
         project-relative paths used by the script. Output paths are those whose
         variable name or artifact file name starts with the script prefix
-        (for example ``a010``).
+        (for example ``a010`` or ``v010``).
     """
     script_path = Path(script_path)
     tree = ast.parse(script_path.read_text())
