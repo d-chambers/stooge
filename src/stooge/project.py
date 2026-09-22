@@ -16,7 +16,8 @@ from stooge.utils.dag import topological_sort
 from stooge.utils.parse import parse_local, parse_script
 from stooge.version import __version__
 
-_TASK_NAME_RE = re.compile(r"^(a\d{3})(?:_.+)?\.py$")
+# A task ID is one lowercase letter and three digits, e.g. a010 or v010.
+_TASK_NAME_RE = re.compile(r"^([a-z]\d{3})(?:_.+)?\.py$")
 _SCHEMA_VERSION = 1
 
 

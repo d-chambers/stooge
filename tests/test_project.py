@@ -48,6 +48,25 @@ class TestProjectFromPath:
         project = Project.from_path(tmp_path, backend="python")
         assert project.tasks["a010"].outputs == (Path("outputs/result.txt"),)
 
+    def test_accepts_any_lowercase_task_letter(self, workflow_project):
+        """Discover tasks led by letters other than a, wired by their artifacts."""
+        local = workflow_project / "local.py"
+        local.write_text(local.read_text() + "v010_plot = out_dir / 'v010_plot.txt'\n")
+        (workflow_project / "v010_plot.py").write_text(
+            "from local import a030_result, v010_plot\n"
+            "v010_plot.write_text(a030_result.read_text())\n"
+        )
+        project = Project.from_path(workflow_project)
+        assert project.tasks["v010"].outputs == (Path("outputs/v010_plot.txt"),)
+        assert project.tasks["v010"].dependencies == ("a030",)
+
+    @pytest.mark.parametrize("name", ["A010_x.py", "ab10_x.py", "a01_x.py", "main.py"])
+    def test_ignores_non_task_scripts(self, workflow_project, name):
+        """Leave scripts without a letter-and-three-digit ID out of the graph."""
+        (workflow_project / name).write_text("print('not a task')\n")
+        project = Project.from_path(workflow_project)
+        assert set(project.tasks) == {"a010", "a020", "a030"}
+
 
 class TestProjectOverrides:
     """Tests for ephemeral override-aware project models."""

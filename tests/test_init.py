@@ -54,6 +54,20 @@ class TestBasicInit:
         new_mtime = local.stat().st_mtime
         assert current_mtime == new_mtime
 
+    def test_existing_task_suppresses_starter(self, tmp_path):
+        """Skip the starter a010 script when any task already exists."""
+        (tmp_path / "local.py").write_text(
+            "from pathlib import Path\n"
+            "root = Path(__file__).parent\n"
+            "v010_out = root / 'outputs/v010_out.txt'\n"
+        )
+        (tmp_path / "v010_plot.py").write_text(
+            "from local import v010_out\nprint(v010_out)\n"
+        )
+        stooge.init(tmp_path)
+        assert not (tmp_path / "a010_first_script.py").exists()
+        assert set(stooge.load_project(tmp_path).tasks) == {"v010"}
+
     def test_manifest_exists(self, basic_spf):
         """Initialization writes the canonical root manifest."""
         assert (basic_spf / ".stooge.toml").is_file()

@@ -71,6 +71,19 @@ class TestRunProject:
         result = workflow_project / "outputs/a030_result.txt"
         assert result.read_text() == "raw-clean-calc-result"
 
+    def test_runs_task_led_by_another_letter(self, workflow_project):
+        """Run a v-prefixed task after the a-prefixed tasks it reads."""
+        local = workflow_project / "local.py"
+        local.write_text(local.read_text() + "v010_plot = out_dir / 'v010_plot.txt'\n")
+        (workflow_project / "v010_plot.py").write_text(
+            "from local import a030_result, v010_plot\n"
+            "v010_plot.write_text(a030_result.read_text() + '-plot')\n"
+        )
+        result = run_project(workflow_project, "v010")
+        assert result.executed == ("a010", "a020", "a030", "v010")
+        plot = workflow_project / "outputs/v010_plot.txt"
+        assert plot.read_text() == "raw-clean-calc-result-plot"
+
     def test_newer_input_rebuilds_chain(self, workflow_project):
         """Rebuild all affected tasks after an external input changes."""
         run_project(workflow_project, "a030")
