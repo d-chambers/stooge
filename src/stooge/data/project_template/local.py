@@ -2,7 +2,8 @@
 # {{ project_name }}
 
 Stooge reads this file statically. Define paths using ``Path`` string literals,
-``Path(__file__).parent``, aliases, and ``/`` joins with string literals only.
+``Path(__file__).parent``, aliases, and ``/`` joins with strings or static paths.
+Private helpers can derive public paths without becoming tracked artifacts.
 Keep this file free of side effects and project-module imports.
 """
 

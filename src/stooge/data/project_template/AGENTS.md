@@ -8,7 +8,10 @@ remain directly executable in dependency order.
   any series can use another's outputs, dependencies decide execution order,
   and ties run in sorted task-ID order.
 - Declare paths statically in `local.py`; allow only `Path` literals,
-  `Path(__file__).parent`, aliases, and `/` joins with string literals.
+  `Path(__file__).parent`, aliases, and `/` joins with string literals or other
+  static paths.
+- Private path helpers such as `_base` may derive public paths, but are not
+  tracked as artifacts or available through `--set`.
 - Keep `local.py` free of side effects and project-module imports.
 - An output's variable name or filename starts with its producing task ID.
   Other `local.py` paths referenced by that script are inputs.

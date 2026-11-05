@@ -28,9 +28,10 @@ def parse_local(
     Returns
     -------
     dict[str, Path]
-        Mapping of variable name to normalized ``Path`` values. Supported
-        expressions are ``Path`` construction, ``.parent``, path joins using
-        string literals, and aliases of earlier path variables.
+        Mapping of public variable names to normalized ``Path`` values.
+        Private names can supply intermediate paths but are omitted from the
+        result. Supported expressions are ``Path`` construction, ``.parent``,
+        joins with string literals or paths, and earlier path aliases.
 
     Raises
     ------
@@ -53,32 +54,44 @@ def parse_local(
         raise StoogeParseError(f"Cannot parse local.py: {exc}") from exc
 
     overrides = dict(overrides or {})
-    out: dict[str, Path] = {}
+    # Keep helper values in their original form: normalizing an absolute base
+    # to "." here would change what a later base.parent expression means.
+    known_paths: dict[str, Path | StoogeParseError] = {}
     for statement in tree.body:
         if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
             continue
         target = statement.targets[0]
-        if not isinstance(target, ast.Name) or target.id.startswith("_"):
+        if not isinstance(target, ast.Name):
             continue
-        if target.id in overrides:
-            out[target.id] = _normalize_project_path(
-                overrides[target.id], project_path.resolve()
-            )
+        if target.id in overrides and not target.id.startswith("_"):
+            known_paths[target.id] = Path(overrides[target.id])
             continue
         try:
             value = _evaluate_path_expression(
                 statement.value,
-                known_paths=out,
+                known_paths=known_paths,
                 local_file=local_path.resolve(),
             )
         except StoogeParseError as exc:
+            if target.id.startswith("_"):
+                # Preserve ignored private expressions, but retain their error
+                # so a public path depending on one cannot silently disappear.
+                known_paths[target.id] = exc
+                continue
             raise StoogeParseError(
                 f"Unsupported local.py path expression for '{target.id}' "
                 f"on line {statement.lineno}: {exc}"
             ) from exc
         if value is not None:
-            out[target.id] = _normalize_project_path(value, project_path.resolve())
+            known_paths[target.id] = value
 
+    # Private helpers participate in evaluation, never in artifact discovery
+    # or the public override interface.
+    out = {
+        name: _normalize_project_path(value, project_path.resolve())
+        for name, value in known_paths.items()
+        if not name.startswith("_")
+    }
     unknown = sorted(set(overrides) - set(out))
     if unknown:
         available = ", ".join(sorted(out))
@@ -164,13 +177,16 @@ def _normalize_project_path(path: Path, project_path: Path) -> Path:
 def _evaluate_path_expression(
     node: ast.expr,
     *,
-    known_paths: Mapping[str, Path],
+    known_paths: Mapping[str, Path | StoogeParseError],
     local_file: Path,
 ) -> Path | None:
     """Evaluate one supported static path expression, or ignore non-path data."""
     if isinstance(node, ast.Name):
         if node.id in known_paths:
-            return known_paths[node.id]
+            value = known_paths[node.id]
+            if isinstance(value, StoogeParseError):
+                raise value
+            return value
         if node.id == "__file__":
             return local_file
         return None
@@ -215,18 +231,25 @@ def _evaluate_path_expression(
             if _references_path_data(node, known_paths):
                 raise StoogeParseError("path joins must start from a known path")
             return None
-        if not isinstance(node.right, ast.Constant) or not isinstance(
-            node.right.value, str
-        ):
-            raise StoogeParseError("path joins require string literals")
-        return base / node.right.value
+        if isinstance(node.right, ast.Constant) and isinstance(node.right.value, str):
+            return base / node.right.value
+        # Reuse the same static evaluator for Path literals and helper paths;
+        # arbitrary calls remain unsupported and are never executed.
+        suffix = _evaluate_path_expression(
+            node.right, known_paths=known_paths, local_file=local_file
+        )
+        if suffix is None:
+            raise StoogeParseError("path joins require string literals or paths")
+        return base / suffix
 
     if _references_path_data(node, known_paths):
         raise StoogeParseError("expression is not part of the static path contract")
     return None
 
 
-def _references_path_data(node: ast.AST, known_paths: Mapping[str, Path]) -> bool:
+def _references_path_data(
+    node: ast.AST, known_paths: Mapping[str, Path | StoogeParseError]
+) -> bool:
     """Return whether an expression appears intended to calculate a path."""
     path_names = set(known_paths) | {"Path", "__file__"}
     return any(
