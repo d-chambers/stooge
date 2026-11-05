@@ -6,7 +6,7 @@ import jinja2
 
 from stooge.constants import _template_path, backends
 from stooge.exceptions import StoogeInitError, StoogeParseError
-from stooge.project import Project
+from stooge.project import _TASK_NAME_RE, Project
 
 
 def _init_directory(
@@ -29,7 +29,12 @@ def _init_directory(
         new_path = output_directory / relative_path
         if new_path.exists():
             continue
-        if new_path.name.startswith("a010") and any(output_directory.glob("a010*.py")):
+        # The starter task is only for projects that have no tasks yet.
+        is_starter = _TASK_NAME_RE.match(new_path.name) is not None
+        has_tasks = any(
+            _TASK_NAME_RE.match(script.name) for script in output_directory.glob("*.py")
+        )
+        if is_starter and has_tasks:
             continue
         template = jinja2.Template(path.read_text())
         new_path.parent.mkdir(exist_ok=True, parents=True)

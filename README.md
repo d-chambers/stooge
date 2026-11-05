@@ -9,10 +9,17 @@ Stooge requires Python 3.12 or newer. Supported execution backends are
 
 ## Project structure
 
-Task scripts use canonical IDs such as `a010_clean.py` and
-`a020_calculate.py`. Paths are declared in `local.py`. A path is an output when
-its variable name or filename starts with the current script's task ID; other
-referenced paths are inputs.
+Task scripts use canonical IDs: one lowercase letter and three digits, such as
+`a010_clean.py`, `a020_calculate.py`, or `v010_plot.py`. Uppercase letters are
+not valid. The letter is free to group related tasks and has no other meaning:
+tasks may depend on outputs from any series, in either direction. Dependencies
+decide execution order, and remaining ties run in sorted task-ID order (`a010`,
+`a020`, `b010`). Any other `.py` file whose name fits this pattern is treated as
+a task and must declare an output.
+
+Paths are declared in `local.py`. A path is an output when its variable name or
+filename starts with the current script's task ID; other referenced paths are
+inputs.
 
 ```text
 my_project/
@@ -129,5 +136,5 @@ ruff check .
 ruff format --check .
 ```
 
-Stooge is optional by design: scripts remain directly executable in task-ID
+Stooge is optional by design: scripts remain directly executable in dependency
 order. The supported Python API is listed in `stooge.__all__`.
