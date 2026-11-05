@@ -4,7 +4,9 @@ This is a Stooge research project. Python scripts are pipeline tasks and also
 remain directly executable in dependency order.
 
 - Name task scripts `a010_name.py`, `a020_name.py`, and so on; any lowercase
-  letter may lead the ID, e.g. `v010_plot.py`.
+  letter may lead the ID, e.g. `v010_plot.py`. The letter only groups tasks:
+  any series can use another's outputs, dependencies decide execution order,
+  and ties run in sorted task-ID order.
 - Declare paths statically in `local.py`; allow only `Path` literals,
   `Path(__file__).parent`, aliases, and `/` joins with string literals.
 - Keep `local.py` free of side effects and project-module imports.
