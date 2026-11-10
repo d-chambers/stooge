@@ -59,6 +59,56 @@ class TestPlanRun:
             plan_run(project, "a999")
 
 
+class TestDirectoryInputs:
+    """Tests for staleness of tasks that read a directory input."""
+
+    @pytest.fixture
+    def directory_project(self, tmp_path):
+        """Create and build a task whose input is a helper package."""
+        root = tmp_path / "directory_project"
+        (root / "helpers").mkdir(parents=True)
+        (root / "helpers" / "mod.py").write_text("VALUE = 'value'\n")
+        (root / "local.py").write_text(
+            "from pathlib import Path\n"
+            "root = Path(__file__).parent\n"
+            "helpers = root / 'helpers'\n"
+            "a010_out = root / 'outputs' / 'a010_out.txt'\n"
+        )
+        (root / "a010_out.py").write_text(
+            "from local import helpers, a010_out\n"
+            "a010_out.write_text((helpers / 'mod.py').read_text())\n"
+        )
+        Project.from_path(root, backend="python").write_toml()
+        run_project(root, "a010")
+        return root
+
+    @staticmethod
+    def _make_newer_than_outputs(path, root):
+        """Give a file a modification time after the built output."""
+        newer = (root / "outputs/a010_out.txt").stat().st_mtime_ns + 10**9
+        os.utime(path, ns=(newer, newer))
+
+    def test_source_change_is_stale(self, directory_project):
+        """Rebuild when a source file inside the directory input is newer."""
+        source = directory_project / "helpers" / "mod.py"
+        self._make_newer_than_outputs(source, directory_project)
+        project = Project.read_toml(directory_project)
+        plan = plan_run(project, "a010")
+        assert plan.reasons["a010"] is RunReason.STALE_INPUT
+
+    @pytest.mark.parametrize(
+        "cache_name", ["__pycache__/mod.cpython-312.pyc", "mod.pyc", "mod.pyo"]
+    )
+    def test_bytecode_cache_is_ignored(self, directory_project, cache_name):
+        """Do not rebuild when only interpreter bytecode is newer."""
+        cache = directory_project / "helpers" / cache_name
+        cache.parent.mkdir(exist_ok=True)
+        cache.write_bytes(b"bytecode")
+        self._make_newer_than_outputs(cache, directory_project)
+        project = Project.read_toml(directory_project)
+        assert plan_run(project, "a010").task_ids == ()
+
+
 class TestRunProject:
     """Tests for executing planned tasks."""
 

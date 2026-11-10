@@ -80,6 +80,10 @@ its newest input is newer than its oldest output. Script mtimes alone do not
 trigger work. A `local.py` edit only rebuilds tasks whose parsed definitions
 change. When an upstream task runs, affected downstream tasks are rebuilt.
 
+A directory input is as new as its newest file. Python bytecode caches
+(`__pycache__/`, `*.pyc`, `*.pyo`) inside it are ignored, so importing a helper
+package never makes its consumers stale.
+
 - `--dry-run` reports the ordered plan and a reason for each task without
   writing the manifest or outputs.
 - `--force` always reruns the target in addition to stale dependencies.
