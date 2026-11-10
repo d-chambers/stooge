@@ -41,6 +41,13 @@ class TestBasicInit:
         contents = local_path.read_text()
         assert name in contents
 
+    def test_rendered_files_end_with_newline(self, basic_spf):
+        """Ensure rendering keeps each template's trailing newline."""
+        rendered = [x for x in basic_spf.iterdir() if x.suffix in {".py", ".md"}]
+        assert rendered
+        for path in rendered:
+            assert path.read_text().endswith("\n"), path.name
+
     def test_files_not_overwritten(self, tmp_path_factory):
         """Simply ensure files which already exist do not get overwritten."""
         path = tmp_path_factory.mktemp(basename="test_no_overwrite")
