@@ -282,11 +282,23 @@ def _artifact_time(root: Path, artifact: Path, *, newest: bool) -> int | None:
     if not path.is_dir():
         return path.stat().st_mtime_ns
 
-    descendants = [child for child in path.rglob("*") if child.is_file()]
+    # Interpreter bytecode caches change without the directory's content
+    # changing, so they must not make a directory artifact look newer.
+    descendants = [
+        child
+        for child in path.rglob("*")
+        if child.is_file() and not _is_bytecode_cache(child.relative_to(path))
+    ]
     if not descendants:
         return path.stat().st_mtime_ns
     times = [child.stat().st_mtime_ns for child in descendants]
     return max(times) if newest else min(times)
+
+
+def _is_bytecode_cache(relative_path: Path) -> bool:
+    """Return True for Python bytecode cache files inside an artifact."""
+    in_cache_directory = "__pycache__" in relative_path.parts
+    return in_cache_directory or relative_path.suffix in {".pyc", ".pyo"}
 
 
 def _task_environment(project: Project, *, debug: bool) -> dict[str, str] | None:
