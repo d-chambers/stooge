@@ -28,6 +28,7 @@ def info(project_path: str | Path | None = None) -> dict:
             "inputs": [item.as_posix() for item in task.inputs],
             "outputs": [item.as_posix() for item in task.outputs],
             "dependencies": list(task.dependencies),
+            "modules": [item.as_posix() for item in task.modules],
             "stale": reason is not None,
             "reason": reason.value if reason is not None else "up_to_date",
         }
