@@ -36,7 +36,8 @@ def _init_directory(
         )
         if is_starter and has_tasks:
             continue
-        template = jinja2.Template(path.read_text())
+        # Jinja drops a template's final newline unless told to keep it.
+        template = jinja2.Template(path.read_text(), keep_trailing_newline=True)
         new_path.parent.mkdir(exist_ok=True, parents=True)
         new_path.write_text(template.render(data))
 

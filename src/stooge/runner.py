@@ -12,7 +12,13 @@ from pathlib import Path
 
 from stooge.constants import local_path
 from stooge.exceptions import StoogeRunError, StoogeTaskNotFoundError
-from stooge.project import Project, TaskSpec, load_project, task_fingerprint
+from stooge.project import (
+    Project,
+    TaskSpec,
+    load_project,
+    task_code_hash,
+    task_fingerprint,
+)
 from stooge.utils.parse import parse_local
 
 # Stdlib-only bootstrap: build the ``local`` module from the project's real
@@ -204,7 +210,7 @@ def run_project(
             continue
         executed_hashes = dict(project.executed_hashes)
         executed_task_hashes = dict(project.executed_task_hashes)
-        executed_hashes[task_id] = project.source_hashes[task.script.as_posix()]
+        executed_hashes[task_id] = task_code_hash(project, task)
         executed_task_hashes[task_id] = task_fingerprint(task)
         project = replace(
             project,
@@ -261,8 +267,8 @@ def task_stale_reason(
     if produced_input_missing:
         return RunReason.MISSING_INPUT
     if check_fingerprints:
-        script_hash = project.source_hashes[task.script.as_posix()]
-        if project.executed_hashes.get(task_id) != script_hash:
+        # Edits to the script or an imported project module invalidate it.
+        if project.executed_hashes.get(task_id) != task_code_hash(project, task):
             return RunReason.SCRIPT_CHANGED
         if project.executed_task_hashes.get(task_id) != task_fingerprint(task):
             return RunReason.DEFINITION_CHANGED
@@ -292,11 +298,23 @@ def _artifact_time(root: Path, artifact: Path, *, newest: bool) -> int | None:
     if not path.is_dir():
         return path.stat().st_mtime_ns
 
-    descendants = [child for child in path.rglob("*") if child.is_file()]
+    # Interpreter bytecode caches change without the directory's content
+    # changing, so they must not make a directory artifact look newer.
+    descendants = [
+        child
+        for child in path.rglob("*")
+        if child.is_file() and not _is_bytecode_cache(child.relative_to(path))
+    ]
     if not descendants:
         return path.stat().st_mtime_ns
     times = [child.stat().st_mtime_ns for child in descendants]
     return max(times) if newest else min(times)
+
+
+def _is_bytecode_cache(relative_path: Path) -> bool:
+    """Return True for Python bytecode cache files inside an artifact."""
+    in_cache_directory = "__pycache__" in relative_path.parts
+    return in_cache_directory or relative_path.suffix in {".pyc", ".pyo"}
 
 
 def _task_environment(project: Project, *, debug: bool) -> dict[str, str] | None:

@@ -162,6 +162,88 @@ def parse_script(
     return {"inputs": inputs, "outputs": outputs}
 
 
+def parse_modules(script_path: Path, project_path: Path) -> set[Path]:
+    """
+    Find the project modules a script imports, following them transitively.
+
+    Parameters
+    ----------
+    script_path
+        Path to the script file to parse.
+    project_path
+        The project root. Only modules and packages stored under it are
+        followed; ``local.py`` is excluded because it is tracked separately.
+
+    Notes
+    -----
+    Imports are resolved statically, the way a script run from the project
+    root would find them: ``import pkg.mod`` and ``from pkg import mod`` map
+    to ``pkg/__init__.py`` and ``pkg/mod.py`` (or ``pkg/mod/__init__.py``)
+    when those files exist. Relative imports resolve against the importing
+    module's directory. Third-party and standard-library imports are ignored.
+
+    Returns
+    -------
+    set[Path]
+        Project-relative paths of the imported module files.
+    """
+    root = Path(project_path).resolve()
+    script_path = Path(script_path).resolve()
+    excluded = {script_path, root / "local.py"}
+    found: set[Path] = set()
+    pending = [script_path]
+    # Walk the import graph; ``found`` guards against import cycles.
+    while pending:
+        current = pending.pop()
+        tree = ast.parse(current.read_text(), filename=str(current))
+        for parts in _imported_module_parts(tree, current.parent.relative_to(root)):
+            for module_file in _module_files(root, parts):
+                if module_file not in found and module_file not in excluded:
+                    found.add(module_file)
+                    pending.append(module_file)
+    return {path.relative_to(root) for path in found}
+
+
+def _imported_module_parts(tree: ast.AST, package: Path) -> list[tuple[str, ...]]:
+    """Return dotted module names (as parts) that an AST may import."""
+    out: list[tuple[str, ...]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            out.extend(tuple(alias.name.split(".")) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            # ``from ..x import y`` climbs level - 1 directories from the
+            # importing module's package before descending into ``x``.
+            keep = len(package.parts) - max(node.level - 1, 0)
+            if keep < 0:
+                continue  # Climbs above the project root; Python rejects it.
+            base = package.parts[:keep] if node.level else ()
+            if node.module:
+                base = (*base, *node.module.split("."))
+            out.append(base)
+            # Imported names may be submodules, e.g. ``from pkg import mod``.
+            out.extend((*base, alias.name) for alias in node.names)
+    return [parts for parts in out if parts and "*" not in parts]
+
+
+def _module_files(root: Path, parts: tuple[str, ...]) -> list[Path]:
+    """Return project files executed by importing one dotted module name."""
+    out: list[Path] = []
+    directory = root
+    for part in parts:
+        candidate = directory / part
+        if (candidate / "__init__.py").is_file():
+            out.append(candidate / "__init__.py")
+        elif candidate.with_suffix(".py").is_file():
+            # A plain module has no submodules, so resolution stops here.
+            out.append(candidate.with_suffix(".py"))
+            break
+        elif not candidate.is_dir():
+            # Not part of the project, e.g. a third-party or stdlib module.
+            break
+        directory = candidate
+    return out
+
+
 def _normalize_project_path(path: Path, project_path: Path) -> Path:
     """Return a path relative to the project when possible."""
     path = Path(path)

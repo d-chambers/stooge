@@ -41,8 +41,10 @@ Private helpers such as `_base = Path(__file__).parent` can be used to derive pu
 Keep `local.py` free of side effects and project-module imports. Output parent
 directories are created immediately before their producing task runs.
 
+Shared code can live in helper modules or packages inside the project, such as `utils.py` or `helpers/`. Stooge statically follows each task's imports, including imports between helpers and relative imports inside packages, and records the project files they resolve to as the task's `modules`. Editing one of those files reruns only the tasks that import it. Third-party and standard-library imports are not tracked.
+
 Parsing produces a deterministic `.stooge.toml` containing the backend, source
-hashes, artifact paths, and direct task dependencies. Generated projects also
+hashes, artifact paths, imported project modules, and direct task dependencies. Generated projects also
 include a short `AGENTS.md` with these conventions.
 
 ## Initialize, parse, and inspect
@@ -59,6 +61,7 @@ stooge info my_project --json
 
 Use `--backend python` to run tasks with the interpreter that launched Stooge.
 `info` is read-only and can inspect a project before its manifest exists.
+`stooge --version` (or `stooge version`) prints the installed Stooge version.
 
 Parsing rejects dynamic path expressions, duplicate task IDs, duplicate output
 producers, dependency cycles, tasks without outputs, and outputs outside the
@@ -79,10 +82,11 @@ stooge run --all my_project
 
 `--all` makes every task a target, so one command brings independent branches and series up to date without an aggregator task. It takes no task ID; its optional positional argument is the project path. The combined plan follows the usual execution order, and JSON envelopes report `"target": null`.
 
-A task is stale when an output is missing, its script content hash changed, or
-its newest input is newer than its oldest output. Script mtimes alone do not
-trigger work. A `local.py` edit only rebuilds tasks whose parsed definitions
-change. When an upstream task runs, affected downstream tasks are rebuilt.
+A task is stale when an output is missing, the content hash of its script or of a project module it imports changed (reported as `script_changed`), or its newest input is newer than its oldest output. Script and module mtimes alone do not trigger work. A `local.py` edit only rebuilds tasks whose parsed definitions change. When an upstream task runs, affected downstream tasks are rebuilt.
+
+A directory input is as new as its newest file. Python bytecode caches
+(`__pycache__/`, `*.pyc`, `*.pyo`) inside it are ignored, so importing a helper
+package never makes its consumers stale.
 
 - `--dry-run` reports the ordered plan and a reason for each task without
   writing the manifest or outputs.

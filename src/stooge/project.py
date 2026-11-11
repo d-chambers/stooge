@@ -13,7 +13,7 @@ import tomli_w
 from stooge.constants import backends, local_path, toml_path
 from stooge.exceptions import StoogeParseError, StoogeRunError
 from stooge.utils.dag import topological_sort
-from stooge.utils.parse import parse_local, parse_script
+from stooge.utils.parse import parse_local, parse_modules, parse_script
 from stooge.version import __version__
 
 # A task ID is one lowercase letter and three digits, e.g. a010 or v010.
@@ -30,6 +30,8 @@ class TaskSpec:
     inputs: tuple[Path, ...]
     outputs: tuple[Path, ...]
     dependencies: tuple[str, ...] = ()
+    # Project helper modules the script imports; their code counts as the task's.
+    modules: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,8 @@ class Project:
     executed_hashes: dict[str, str] = field(default_factory=dict)
     executed_task_hashes: dict[str, str] = field(default_factory=dict)
     overrides: dict[str, Path] = field(default_factory=dict)
+    # False for manifests written before task modules were recorded.
+    modules_tracked: bool = True
     schema_version: int = _SCHEMA_VERSION
     stooge_version: str = __version__
 
@@ -81,6 +85,7 @@ class Project:
                     script=script.relative_to(root),
                     inputs=inputs,
                     outputs=outputs,
+                    modules=tuple(sorted(parse_modules(script, root), key=str)),
                 )
         except (OSError, SyntaxError, ValueError) as exc:
             if isinstance(exc, StoogeParseError):
@@ -89,7 +94,7 @@ class Project:
 
         tasks = _add_dependencies(parsed_tasks)
         _validate_graph(tasks)
-        hashes = _calculate_source_hashes(root, scripts.values())
+        hashes = _calculate_source_hashes(root, _code_files(root, scripts, tasks))
         return cls(
             root=root,
             backend=selected_backend,
@@ -126,6 +131,7 @@ class Project:
                     inputs=tuple(Path(value) for value in item.get("inputs", [])),
                     outputs=tuple(Path(value) for value in item.get("outputs", [])),
                     dependencies=tuple(item.get("dependencies", [])),
+                    modules=tuple(Path(value) for value in item.get("modules", [])),
                 )
         except (KeyError, TypeError) as exc:
             raise StoogeParseError(f"Invalid {toml_path} manifest: {exc}") from exc
@@ -136,6 +142,9 @@ class Project:
             source_hashes=dict(data.get("source_hashes", {})),
             executed_hashes=dict(data.get("executed_hashes", {})),
             executed_task_hashes=dict(data.get("executed_task_hashes", {})),
+            modules_tracked=all(
+                "modules" in item for item in data.get("tasks", {}).values()
+            ),
             schema_version=data["schema_version"],
             stooge_version=version,
         )
@@ -162,6 +171,7 @@ class Project:
                     "inputs": [path.as_posix() for path in task.inputs],
                     "outputs": [path.as_posix() for path in task.outputs],
                     "dependencies": list(task.dependencies),
+                    "modules": [path.as_posix() for path in task.modules],
                 }
                 for task_id, task in sorted(self.tasks.items())
             },
@@ -172,9 +182,12 @@ class Project:
 
     def sources_are_current(self) -> bool:
         """Return whether stored hashes match current project sources."""
+        if not self.modules_tracked:
+            return False  # Reparse once to discover imported modules.
         try:
             scripts = _discover_scripts(self.root)
-            hashes = _calculate_source_hashes(self.root, scripts.values())
+            paths = _code_files(self.root, scripts, self.tasks)
+            hashes = _calculate_source_hashes(self.root, paths)
         except (FileNotFoundError, StoogeParseError):
             return False
         return hashes == self.source_hashes
@@ -220,13 +233,21 @@ def reparse_project(
     backend = previous.backend if previous is not None else None
     parsed = Project.from_path(root, backend=backend)
     if previous is not None:
+        executed_hashes = {
+            task_id: value
+            for task_id, value in previous.executed_hashes.items()
+            if task_id in parsed.tasks
+        }
+        if not previous.modules_tracked:
+            # Older manifests recorded bare script hashes. Trust the helper
+            # modules as they are now for tasks whose script is unchanged.
+            for task_id, value in executed_hashes.items():
+                task = parsed.tasks[task_id]
+                if value == parsed.source_hashes[task.script.as_posix()]:
+                    executed_hashes[task_id] = task_code_hash(parsed, task)
         parsed = replace(
             parsed,
-            executed_hashes={
-                task_id: value
-                for task_id, value in previous.executed_hashes.items()
-                if task_id in parsed.tasks
-            },
+            executed_hashes=executed_hashes,
             executed_task_hashes={
                 task_id: value
                 for task_id, value in previous.executed_task_hashes.items()
@@ -249,6 +270,18 @@ def task_fingerprint(task: TaskSpec) -> str:
         "--dependencies--",
         *task.dependencies,
     ]
+    return hashlib.sha256("\0".join(values).encode()).hexdigest()
+
+
+def task_code_hash(project: Project, task: TaskSpec) -> str:
+    """Return a hash of a task script and the project modules it imports."""
+    script_hash = project.source_hashes[task.script.as_posix()]
+    if not task.modules:
+        # Matches fingerprints recorded before module tracking existed.
+        return script_hash
+    values = [script_hash]
+    for module in task.modules:
+        values += [module.as_posix(), project.source_hashes[module.as_posix()]]
     return hashlib.sha256("\0".join(values).encode()).hexdigest()
 
 
@@ -324,9 +357,17 @@ def _validate_graph(tasks: dict[str, TaskSpec]) -> None:
         raise StoogeParseError(str(exc)) from exc
 
 
-def _calculate_source_hashes(root: Path, scripts) -> dict[str, str]:
-    """Calculate deterministic hashes for local.py and all task scripts."""
-    paths = [root / local_path, *sorted(scripts)]
+def _code_files(
+    root: Path, scripts: dict[str, Path], tasks: dict[str, TaskSpec]
+) -> list[Path]:
+    """Return task scripts plus every project module imported by a task."""
+    modules = {root / module for task in tasks.values() for module in task.modules}
+    return [*scripts.values(), *modules]
+
+
+def _calculate_source_hashes(root: Path, paths) -> dict[str, str]:
+    """Calculate deterministic hashes for local.py and the given code files."""
+    paths = [root / local_path, *sorted(set(paths))]
     return {
         path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in paths
