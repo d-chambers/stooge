@@ -312,6 +312,12 @@ class TestRunAll:
         assert run_project(two_branches, None).executed == ("a010", "a020", "b010")
         assert run_project(two_branches, None).executed == ()
 
+    def test_run_all_rebuilds_only_stale_branch(self, two_branches):
+        """Rerun only the branch whose output went missing."""
+        run_project(two_branches, None)
+        (two_branches / "outputs/a020_out.txt").unlink()
+        assert run_project(two_branches, None).executed == ("a020",)
+
     def test_dry_run_json(self, two_branches):
         """Preview the combined plan through the CLI without building."""
         payload = _run_cli("run", "--all", str(two_branches), "--dry-run")
