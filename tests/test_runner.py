@@ -2,12 +2,16 @@
 
 import os
 import shutil
+import tomllib
+from pathlib import Path
 
 import pytest
+import tomli_w
 
 from stooge.exceptions import StoogeRunError, StoogeTaskNotFoundError
 from stooge.project import Project
 from stooge.runner import RunReason, plan_run, run_project
+from stooge.version import __version__
 
 
 class TestPlanRun:
@@ -158,3 +162,83 @@ class TestRunProject:
         report = run_project(workflow_project, "a030")
         assert report.executed == ("a010", "a020", "a030")
         assert (workflow_project / "outputs/a030_result.txt").is_file()
+
+
+class TestHelperModules:
+    """Tests for staleness from project modules imported by tasks."""
+
+    @pytest.fixture
+    def helper_project(self, workflow_project):
+        """Make a020 import a project package that imports another helper."""
+        package = workflow_project / "helpers"
+        package.mkdir()
+        (package / "__init__.py").write_text("from .text import SUFFIX\n")
+        (package / "text.py").write_text("from constants import SUFFIX\n")
+        (workflow_project / "constants.py").write_text("SUFFIX = '-calc'\n")
+        (workflow_project / "a020_calc.py").write_text(
+            "from local import a010_clean, a020_calc\n"
+            "from helpers import SUFFIX\n"
+            "a020_calc.write_text(a010_clean.read_text() + SUFFIX)\n"
+        )
+        run_project(workflow_project, "a030")
+        return workflow_project
+
+    @staticmethod
+    def _edit_keeping_mtime(path, text):
+        """Change file content while preserving its modification time."""
+        stat = path.stat()
+        path.write_text(text)
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+    def test_task_records_imported_modules(self, helper_project):
+        """List transitively imported project modules on the task."""
+        project = Project.read_toml(helper_project)
+        assert project.tasks["a020"].modules == (
+            Path("constants.py"),
+            Path("helpers/__init__.py"),
+            Path("helpers/text.py"),
+        )
+        assert project.tasks["a010"].modules == ()
+
+    def test_helper_edit_rebuilds_importing_task(self, helper_project):
+        """Rebuild a task and its consumers after an imported module changes."""
+        constants = helper_project / "constants.py"
+        self._edit_keeping_mtime(constants, "SUFFIX = '-new'\n")
+        report = run_project(helper_project, "a030")
+        assert report.executed == ("a020", "a030")
+        assert report.reasons["a010"] is RunReason.UP_TO_DATE
+        assert report.reasons["a020"] is RunReason.SCRIPT_CHANGED
+        result = helper_project / "outputs/a030_result.txt"
+        assert result.read_text() == "raw-clean-new-result"
+        assert run_project(helper_project, "a030").executed == ()
+
+    def test_helper_mtime_alone_does_not_rebuild(self, helper_project):
+        """Ignore helper timestamp changes when its content is unchanged."""
+        constants = helper_project / "constants.py"
+        stat = constants.stat()
+        os.utime(constants, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+        assert run_project(helper_project, "a030").executed == ()
+
+    def test_new_helper_import_is_tracked(self, helper_project):
+        """Track a module that an edited helper starts importing."""
+        (helper_project / "extra.py").write_text("X = 1\n")
+        text = helper_project / "helpers/text.py"
+        self._edit_keeping_mtime(text, "from constants import SUFFIX\nimport extra\n")
+        assert run_project(helper_project, "a030").executed == ("a020", "a030")
+        self._edit_keeping_mtime(helper_project / "extra.py", "X = 2\n")
+        assert run_project(helper_project, "a030").executed == ("a020", "a030")
+
+    def test_manifest_from_older_version_is_reparsed(self, helper_project):
+        """Track helpers for a manifest written before modules were recorded."""
+        manifest = helper_project / ".stooge.toml"
+        data = tomllib.loads(manifest.read_text())
+        data["stooge_version"] = "0.0.0.dev0+older"
+        # Older manifests hashed only local.py and task scripts.
+        for task in data["tasks"].values():
+            for module in task.pop("modules"):
+                data["source_hashes"].pop(module, None)
+        manifest.write_text(tomli_w.dumps(data))
+        constants = helper_project / "constants.py"
+        self._edit_keeping_mtime(constants, "SUFFIX = '-new'\n")
+        assert run_project(helper_project, "a030").executed == ("a020", "a030")
+        assert Project.read_toml(helper_project).stooge_version == __version__

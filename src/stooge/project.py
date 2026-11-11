@@ -13,7 +13,7 @@ import tomli_w
 from stooge.constants import backends, local_path, toml_path
 from stooge.exceptions import StoogeParseError, StoogeRunError
 from stooge.utils.dag import topological_sort
-from stooge.utils.parse import parse_local, parse_script
+from stooge.utils.parse import parse_local, parse_modules, parse_script
 from stooge.version import __version__
 
 # A task ID is one lowercase letter and three digits, e.g. a010 or v010.
@@ -30,6 +30,8 @@ class TaskSpec:
     inputs: tuple[Path, ...]
     outputs: tuple[Path, ...]
     dependencies: tuple[str, ...] = ()
+    # Project helper modules the script imports; their code counts as the task's.
+    modules: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -81,6 +83,7 @@ class Project:
                     script=script.relative_to(root),
                     inputs=inputs,
                     outputs=outputs,
+                    modules=tuple(sorted(parse_modules(script, root), key=str)),
                 )
         except (OSError, SyntaxError, ValueError) as exc:
             if isinstance(exc, StoogeParseError):
@@ -89,7 +92,7 @@ class Project:
 
         tasks = _add_dependencies(parsed_tasks)
         _validate_graph(tasks)
-        hashes = _calculate_source_hashes(root, scripts.values())
+        hashes = _calculate_source_hashes(root, _code_files(root, scripts, tasks))
         return cls(
             root=root,
             backend=selected_backend,
@@ -126,6 +129,7 @@ class Project:
                     inputs=tuple(Path(value) for value in item.get("inputs", [])),
                     outputs=tuple(Path(value) for value in item.get("outputs", [])),
                     dependencies=tuple(item.get("dependencies", [])),
+                    modules=tuple(Path(value) for value in item.get("modules", [])),
                 )
         except (KeyError, TypeError) as exc:
             raise StoogeParseError(f"Invalid {toml_path} manifest: {exc}") from exc
@@ -162,6 +166,7 @@ class Project:
                     "inputs": [path.as_posix() for path in task.inputs],
                     "outputs": [path.as_posix() for path in task.outputs],
                     "dependencies": list(task.dependencies),
+                    "modules": [path.as_posix() for path in task.modules],
                 }
                 for task_id, task in sorted(self.tasks.items())
             },
@@ -174,7 +179,8 @@ class Project:
         """Return whether stored hashes match current project sources."""
         try:
             scripts = _discover_scripts(self.root)
-            hashes = _calculate_source_hashes(self.root, scripts.values())
+            paths = _code_files(self.root, scripts, self.tasks)
+            hashes = _calculate_source_hashes(self.root, paths)
         except (FileNotFoundError, StoogeParseError):
             return False
         return hashes == self.source_hashes
@@ -195,7 +201,13 @@ def load_project(path: str | Path, *, persist: bool = True) -> Project:
         stored = Project.read_toml(root)
     except StoogeParseError:
         stored = None
-    if stored is not None and stored.sources_are_current():
+    # Manifests from another Stooge version may predate parsed fields such as
+    # task modules, so they are reparsed (keeping execution fingerprints).
+    if (
+        stored is not None
+        and stored.stooge_version == __version__
+        and stored.sources_are_current()
+    ):
         return stored
 
     project = reparse_project(root, previous=stored, persist=False)
@@ -249,6 +261,18 @@ def task_fingerprint(task: TaskSpec) -> str:
         "--dependencies--",
         *task.dependencies,
     ]
+    return hashlib.sha256("\0".join(values).encode()).hexdigest()
+
+
+def task_code_hash(project: Project, task: TaskSpec) -> str:
+    """Return a hash of a task script and the project modules it imports."""
+    script_hash = project.source_hashes[task.script.as_posix()]
+    if not task.modules:
+        # Matches fingerprints recorded before module tracking existed.
+        return script_hash
+    values = [script_hash]
+    for module in task.modules:
+        values += [module.as_posix(), project.source_hashes[module.as_posix()]]
     return hashlib.sha256("\0".join(values).encode()).hexdigest()
 
 
@@ -324,9 +348,17 @@ def _validate_graph(tasks: dict[str, TaskSpec]) -> None:
         raise StoogeParseError(str(exc)) from exc
 
 
-def _calculate_source_hashes(root: Path, scripts) -> dict[str, str]:
-    """Calculate deterministic hashes for local.py and all task scripts."""
-    paths = [root / local_path, *sorted(scripts)]
+def _code_files(
+    root: Path, scripts: dict[str, Path], tasks: dict[str, TaskSpec]
+) -> list[Path]:
+    """Return task scripts plus every project module imported by a task."""
+    modules = {root / module for task in tasks.values() for module in task.modules}
+    return [*scripts.values(), *modules]
+
+
+def _calculate_source_hashes(root: Path, paths) -> dict[str, str]:
+    """Calculate deterministic hashes for local.py and the given code files."""
+    paths = [root / local_path, *sorted(set(paths))]
     return {
         path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in paths

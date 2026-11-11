@@ -52,6 +52,7 @@ def _project_tasks(project: Project) -> dict[str, dict]:
             "inputs": [item.as_posix() for item in task.inputs],
             "outputs": [item.as_posix() for item in task.outputs],
             "dependencies": list(task.dependencies),
+            "modules": [item.as_posix() for item in task.modules],
         }
         for task_id, task in sorted(project.tasks.items())
     }

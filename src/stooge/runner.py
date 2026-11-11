@@ -12,7 +12,13 @@ from pathlib import Path
 
 from stooge.constants import local_path
 from stooge.exceptions import StoogeRunError, StoogeTaskNotFoundError
-from stooge.project import Project, TaskSpec, load_project, task_fingerprint
+from stooge.project import (
+    Project,
+    TaskSpec,
+    load_project,
+    task_code_hash,
+    task_fingerprint,
+)
 from stooge.utils.parse import parse_local
 
 # Stdlib-only bootstrap: build the ``local`` module from the project's real
@@ -194,7 +200,7 @@ def run_project(
             continue
         executed_hashes = dict(project.executed_hashes)
         executed_task_hashes = dict(project.executed_task_hashes)
-        executed_hashes[task_id] = project.source_hashes[task.script.as_posix()]
+        executed_hashes[task_id] = task_code_hash(project, task)
         executed_task_hashes[task_id] = task_fingerprint(task)
         project = replace(
             project,
@@ -251,8 +257,8 @@ def task_stale_reason(
     if produced_input_missing:
         return RunReason.MISSING_INPUT
     if check_fingerprints:
-        script_hash = project.source_hashes[task.script.as_posix()]
-        if project.executed_hashes.get(task_id) != script_hash:
+        # Edits to the script or an imported project module invalidate it.
+        if project.executed_hashes.get(task_id) != task_code_hash(project, task):
             return RunReason.SCRIPT_CHANGED
         if project.executed_task_hashes.get(task_id) != task_fingerprint(task):
             return RunReason.DEFINITION_CHANGED
