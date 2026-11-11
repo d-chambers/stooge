@@ -11,7 +11,6 @@ import tomli_w
 from stooge.exceptions import StoogeRunError, StoogeTaskNotFoundError
 from stooge.project import Project
 from stooge.runner import RunReason, plan_run, run_project
-from stooge.version import __version__
 
 
 class TestPlanRun:
@@ -228,17 +227,34 @@ class TestHelperModules:
         self._edit_keeping_mtime(helper_project / "extra.py", "X = 2\n")
         assert run_project(helper_project, "a030").executed == ("a020", "a030")
 
-    def test_manifest_from_older_version_is_reparsed(self, helper_project):
-        """Track helpers for a manifest written before modules were recorded."""
-        manifest = helper_project / ".stooge.toml"
+    @staticmethod
+    def _write_pre_module_manifest(root):
+        """Rewrite the manifest as written before modules were recorded."""
+        manifest = root / ".stooge.toml"
         data = tomllib.loads(manifest.read_text())
-        data["stooge_version"] = "0.0.0.dev0+older"
-        # Older manifests hashed only local.py and task scripts.
-        for task in data["tasks"].values():
+        for task_id, task in data["tasks"].items():
             for module in task.pop("modules"):
                 data["source_hashes"].pop(module, None)
+            # Older versions recorded the bare script hash for each run.
+            data["executed_hashes"][task_id] = data["source_hashes"][task["script"]]
         manifest.write_text(tomli_w.dumps(data))
+
+    def test_pre_module_manifest_stays_up_to_date(self, helper_project):
+        """Carry over tasks with unchanged scripts when upgrading a manifest."""
+        self._write_pre_module_manifest(helper_project)
+        assert not Project.read_toml(helper_project).sources_are_current()
+        assert run_project(helper_project, "a030").executed == ()
+        # The run recorded module-aware hashes, so helper edits now count.
+        assert Project.read_toml(helper_project).modules_tracked
         constants = helper_project / "constants.py"
         self._edit_keeping_mtime(constants, "SUFFIX = '-new'\n")
         assert run_project(helper_project, "a030").executed == ("a020", "a030")
-        assert Project.read_toml(helper_project).stooge_version == __version__
+
+    def test_pre_module_manifest_keeps_script_edits_stale(self, helper_project):
+        """Still rebuild an upgraded task whose script itself changed."""
+        self._write_pre_module_manifest(helper_project)
+        script = helper_project / "a020_calc.py"
+        self._edit_keeping_mtime(script, script.read_text() + "# changed\n")
+        report = run_project(helper_project, "a030")
+        assert report.executed == ("a020", "a030")
+        assert report.reasons["a020"] is RunReason.SCRIPT_CHANGED

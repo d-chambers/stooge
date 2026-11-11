@@ -45,6 +45,8 @@ class Project:
     executed_hashes: dict[str, str] = field(default_factory=dict)
     executed_task_hashes: dict[str, str] = field(default_factory=dict)
     overrides: dict[str, Path] = field(default_factory=dict)
+    # False for manifests written before task modules were recorded.
+    modules_tracked: bool = True
     schema_version: int = _SCHEMA_VERSION
     stooge_version: str = __version__
 
@@ -140,6 +142,9 @@ class Project:
             source_hashes=dict(data.get("source_hashes", {})),
             executed_hashes=dict(data.get("executed_hashes", {})),
             executed_task_hashes=dict(data.get("executed_task_hashes", {})),
+            modules_tracked=all(
+                "modules" in item for item in data.get("tasks", {}).values()
+            ),
             schema_version=data["schema_version"],
             stooge_version=version,
         )
@@ -177,6 +182,8 @@ class Project:
 
     def sources_are_current(self) -> bool:
         """Return whether stored hashes match current project sources."""
+        if not self.modules_tracked:
+            return False  # Reparse once to discover imported modules.
         try:
             scripts = _discover_scripts(self.root)
             paths = _code_files(self.root, scripts, self.tasks)
@@ -201,13 +208,7 @@ def load_project(path: str | Path, *, persist: bool = True) -> Project:
         stored = Project.read_toml(root)
     except StoogeParseError:
         stored = None
-    # Manifests from another Stooge version may predate parsed fields such as
-    # task modules, so they are reparsed (keeping execution fingerprints).
-    if (
-        stored is not None
-        and stored.stooge_version == __version__
-        and stored.sources_are_current()
-    ):
+    if stored is not None and stored.sources_are_current():
         return stored
 
     project = reparse_project(root, previous=stored, persist=False)
@@ -232,13 +233,21 @@ def reparse_project(
     backend = previous.backend if previous is not None else None
     parsed = Project.from_path(root, backend=backend)
     if previous is not None:
+        executed_hashes = {
+            task_id: value
+            for task_id, value in previous.executed_hashes.items()
+            if task_id in parsed.tasks
+        }
+        if not previous.modules_tracked:
+            # Older manifests recorded bare script hashes. Trust the helper
+            # modules as they are now for tasks whose script is unchanged.
+            for task_id, value in executed_hashes.items():
+                task = parsed.tasks[task_id]
+                if value == parsed.source_hashes[task.script.as_posix()]:
+                    executed_hashes[task_id] = task_code_hash(parsed, task)
         parsed = replace(
             parsed,
-            executed_hashes={
-                task_id: value
-                for task_id, value in previous.executed_hashes.items()
-                if task_id in parsed.tasks
-            },
+            executed_hashes=executed_hashes,
             executed_task_hashes={
                 task_id: value
                 for task_id, value in previous.executed_task_hashes.items()
