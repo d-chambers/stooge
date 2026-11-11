@@ -13,6 +13,8 @@ remain directly executable in dependency order.
 - Private path helpers such as `_base` may derive public paths, but are not
   tracked as artifacts or available through `--set`.
 - Keep `local.py` free of side effects and project-module imports.
+- Put shared code in project modules or packages (e.g. `utils.py`); editing one
+  reruns the tasks that import it.
 - An output's variable name or filename starts with its producing task ID.
   Other `local.py` paths referenced by that script are inputs.
 

@@ -20,6 +20,12 @@ class TestCli:
         assert result.exit_code == 0
         assert result.stdout.strip() == stooge.__version__
 
+    def test_version_flag(self):
+        """The --version flag prints the package version and exits."""
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0
+        assert result.stdout.strip() == stooge.__version__
+
     def test_init(self, tmp_path):
         """Init command creates a project directory."""
         project_path = tmp_path / "cli_project"

@@ -20,6 +20,28 @@ from stooge.version import __version__
 app = typer.Typer(help="Reproducible research project workflows.")
 
 
+def _print_version(value: bool) -> None:
+    """Print the installed version and exit when --version is given."""
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def _main(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=_print_version,
+            is_eager=True,
+            help="Print the installed Stooge version and exit.",
+        ),
+    ] = False,
+):
+    """Handle top-level options that apply before any command."""
+
+
 def _fail(exc: StoogeError, command: str, *, as_json: bool = False) -> None:
     """Render a domain error in the selected output format and exit."""
     if as_json:
@@ -52,6 +74,7 @@ def _project_tasks(project: Project) -> dict[str, dict]:
             "inputs": [item.as_posix() for item in task.inputs],
             "outputs": [item.as_posix() for item in task.outputs],
             "dependencies": list(task.dependencies),
+            "modules": [item.as_posix() for item in task.modules],
         }
         for task_id, task in sorted(project.tasks.items())
     }

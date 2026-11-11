@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from stooge.exceptions import StoogeParseError
-from stooge.utils.parse import parse_local, parse_script
+from stooge.utils.parse import parse_local, parse_modules, parse_script
 
 
 @pytest.fixture
@@ -247,3 +247,81 @@ class TestParseScriptImports:
             "inputs": {Path("inputs/earthquakes.csv")},
             "outputs": {Path("outputs/a010_cleaned_earthquakes.csv")},
         }
+
+
+class TestParseModules:
+    """Tests for finding project modules imported by a script."""
+
+    @staticmethod
+    def _write(root, files):
+        """Write a mapping of relative path to source under root."""
+        for name, text in files.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+
+    def test_finds_top_level_module(self, tmp_path):
+        """Follow ``from utils import x`` to the project's utils.py."""
+        self._write(
+            tmp_path,
+            {
+                "local.py": "",
+                "utils.py": "VALUE = 1\n",
+                "a010_x.py": "import json\nimport local\nfrom utils import VALUE\n",
+            },
+        )
+        assert parse_modules(tmp_path / "a010_x.py", tmp_path) == {Path("utils.py")}
+
+    def test_finds_package_submodules(self, tmp_path):
+        """Include package __init__ files and submodules named by imports."""
+        self._write(
+            tmp_path,
+            {
+                "pkg/__init__.py": "",
+                "pkg/core.py": "",
+                "pkg/sub/__init__.py": "",
+                "pkg/sub/deep.py": "",
+                "pkg/unused.py": "",
+                "a010_x.py": "from pkg import core\nimport pkg.sub.deep as d\n",
+            },
+        )
+        assert parse_modules(tmp_path / "a010_x.py", tmp_path) == {
+            Path("pkg/__init__.py"),
+            Path("pkg/core.py"),
+            Path("pkg/sub/__init__.py"),
+            Path("pkg/sub/deep.py"),
+        }
+
+    def test_follows_imports_transitively(self, tmp_path):
+        """Follow absolute and relative imports inside helper modules."""
+        self._write(
+            tmp_path,
+            {
+                "pkg/__init__.py": "from .core import f\n",
+                "pkg/core.py": (
+                    "from . import tools\n"
+                    "from ..outside import x\n"
+                    "from ... import above_root\n"
+                ),
+                "pkg/tools.py": "import helpers\n",
+                "helpers.py": "import pkg\n",
+                "a010_x.py": "import pkg\n",
+            },
+        )
+        assert parse_modules(tmp_path / "a010_x.py", tmp_path) == {
+            Path("pkg/__init__.py"),
+            Path("pkg/core.py"),
+            Path("pkg/tools.py"),
+            Path("helpers.py"),
+        }
+
+    def test_ignores_external_and_star_imports(self, tmp_path):
+        """Return nothing for modules that are not files in the project."""
+        self._write(
+            tmp_path,
+            {
+                "inputs/data.csv": "",
+                "a010_x.py": "import os.path\nfrom numpy import *\nimport inputs\n",
+            },
+        )
+        assert parse_modules(tmp_path / "a010_x.py", tmp_path) == set()
