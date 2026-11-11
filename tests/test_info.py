@@ -2,6 +2,9 @@
 Tests for getting info from stooge project.
 """
 
+import subprocess
+import sys
+
 import pytest
 
 import stooge
@@ -51,3 +54,12 @@ class TestInfo:
         assert data["tasks"]["a010"]["reason"] == "missing_output"
         assert not (tmp_path / "outputs").exists()
         assert not (tmp_path / ".stooge.toml").exists()
+
+    def test_info_reports_direct_script_run_as_not_recorded(self, workflow_project):
+        """Outputs written by running a script directly have no recorded run."""
+        subprocess.run(
+            [sys.executable, "a010_clean.py"], cwd=workflow_project, check=True
+        )
+        task = stooge.info(workflow_project)["tasks"]["a010"]
+        assert task["stale"] is True
+        assert task["reason"] == "not_recorded"

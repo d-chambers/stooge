@@ -80,6 +80,8 @@ its newest input is newer than its oldest output. Script mtimes alone do not
 trigger work. A `local.py` edit only rebuilds tasks whose parsed definitions
 change. When an upstream task runs, affected downstream tasks are rebuilt.
 
+Outputs produced by running a script directly (outside `stooge run`) are reported as `not_recorded`: Stooge has no record of which script version built them, so the task is rerun once and recorded.
+
 - `--dry-run` reports the ordered plan and a reason for each task without
   writing the manifest or outputs.
 - `--force` always reruns the target in addition to stale dependencies.
@@ -124,6 +126,7 @@ Every command except `version` accepts `--json`. The envelopes are a stable cont
 - Success: `{"command": "<name>", "ok": true, ...}` with command-specific fields.
 - Failure: `{"command": "<name>", "ok": false, "kind": "<kind>", "error": "<message>"}` written to stdout with exit status 1. `kind` is one of `parse_error`, `task_not_found`, `run_error`, `init_error`, or `error`, so callers can branch without parsing the message.
 - When `run` fails partway through a plan, the failure envelope also includes `executed`: the task IDs that completed (and were recorded in the manifest) before the failure.
+- Each task's `reason` in `info` and `run` plans is one of `missing_output`, `missing_input`, `stale_input`, `not_recorded`, `script_changed`, `definition_changed`, `upstream_rebuilt`, `forced`, or `up_to_date`.
 - `run --dry-run` never fails on a missing raw input; the plan reports it as a `missing_input` reason so a build can always be previewed.
 - When `--set`/`--local-file` overrides are active, `run` envelopes include `"overrides": {name: path}` and `"ephemeral": true`.
 

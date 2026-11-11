@@ -50,6 +50,7 @@ class RunReason(str, Enum):
     MISSING_OUTPUT = "missing_output"
     MISSING_INPUT = "missing_input"
     STALE_INPUT = "stale_input"
+    NOT_RECORDED = "not_recorded"
     SCRIPT_CHANGED = "script_changed"
     DEFINITION_CHANGED = "definition_changed"
     UPSTREAM_REBUILT = "upstream_rebuilt"
@@ -251,6 +252,10 @@ def task_stale_reason(
     if produced_input_missing:
         return RunReason.MISSING_INPUT
     if check_fingerprints:
+        # Outputs exist but no successful Stooge run was recorded, e.g. the
+        # script was executed directly; its source version is unknown.
+        if task_id not in project.executed_hashes:
+            return RunReason.NOT_RECORDED
         script_hash = project.source_hashes[task.script.as_posix()]
         if project.executed_hashes.get(task_id) != script_hash:
             return RunReason.SCRIPT_CHANGED
