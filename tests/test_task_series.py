@@ -344,6 +344,27 @@ class TestRunAll:
         assert isinstance(result.exception, BadParameter)
         assert "--all takes no task ID" in str(result.exception)
 
+    def test_task_id_alone_with_all_is_rejected(self, two_branches, monkeypatch):
+        """Refuse a lone task ID with --all instead of reading it as a path."""
+        monkeypatch.chdir(two_branches)
+        result = runner.invoke(app, ["run", "--all", "a010"], standalone_mode=False)
+        assert isinstance(result.exception, BadParameter)
+        assert "--all takes no task ID" in str(result.exception)
+        assert not (two_branches / "outputs").exists()
+
+    def test_directory_named_like_task_id_is_a_path(self, tmp_path, monkeypatch):
+        """Accept a project directory whose name happens to look like a task ID."""
+        _make_project(tmp_path / "a010", {"a010": ("raw",)})
+        monkeypatch.chdir(tmp_path)
+        payload = _run_cli("run", "--all", "a010", "--dry-run")
+        assert payload["planned"] == ["a010"]
+
+    def test_missing_path_with_all_keeps_json_error(self, tmp_path):
+        """Report a mistyped project path as a parse error, not a usage error."""
+        result = runner.invoke(app, ["run", "--all", str(tmp_path / "nope"), "--json"])
+        assert result.exit_code == 1
+        assert json.loads(result.stdout)["kind"] == "parse_error"
+
     def test_missing_target_is_usage_error(self, two_branches, monkeypatch):
         """Ask for a task ID or --all when neither is given."""
         monkeypatch.chdir(two_branches)
