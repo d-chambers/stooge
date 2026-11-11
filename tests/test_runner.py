@@ -2,6 +2,8 @@
 
 import os
 import shutil
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -189,6 +191,17 @@ class TestRunProject:
         preview = run_project(workflow_project, "a030", dry_run=True)
         assert preview.planned == ("a030",)
         assert preview.reasons["a030"] is RunReason.SCRIPT_CHANGED
+
+    def test_direct_script_run_is_not_recorded(self, workflow_project):
+        """Report outputs built outside Stooge as unrecorded, then record them."""
+        subprocess.run(
+            [sys.executable, "a010_clean.py"], cwd=workflow_project, check=True
+        )
+        preview = run_project(workflow_project, "a010", dry_run=True)
+        assert preview.planned == ("a010",)
+        assert preview.reasons["a010"] is RunReason.NOT_RECORDED
+        assert run_project(workflow_project, "a010").executed == ("a010",)
+        assert run_project(workflow_project, "a010").executed == ()
 
     def test_script_mtime_alone_does_not_mark_task_stale(self, workflow_project):
         """Ignore script timestamp changes when its content hash is unchanged."""

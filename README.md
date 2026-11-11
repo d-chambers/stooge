@@ -88,6 +88,8 @@ A directory input is as new as its newest file. Python bytecode caches
 (`__pycache__/`, `*.pyc`, `*.pyo`) inside it are ignored, so importing a helper
 package never makes its consumers stale.
 
+When a task's outputs exist but Stooge has no recorded successful run for it (for example, the script was only ever run directly), the task is reported as `not_recorded` and rerun once to record its fingerprints.
+
 - `--dry-run` reports the ordered plan and a reason for each task without
   writing the manifest or outputs.
 - `--force` always reruns the target in addition to stale dependencies; with `--all`, every task is a target and is rerun.
@@ -132,6 +134,7 @@ Every command except `version` accepts `--json`. The envelopes are a stable cont
 - Success: `{"command": "<name>", "ok": true, ...}` with command-specific fields.
 - Failure: `{"command": "<name>", "ok": false, "kind": "<kind>", "error": "<message>"}` written to stdout with exit status 1. `kind` is one of `parse_error`, `task_not_found`, `run_error`, `init_error`, or `error`, so callers can branch without parsing the message.
 - When `run` fails partway through a plan, the failure envelope also includes `executed`: the task IDs that completed (and were recorded in the manifest) before the failure.
+- Each task's `reason` in `info` and `run` plans is one of `missing_output`, `missing_input`, `stale_input`, `not_recorded`, `script_changed`, `definition_changed`, `upstream_rebuilt`, `forced`, or `up_to_date`.
 - `run --dry-run` never fails on a missing raw input; the plan reports it as a `missing_input` reason so a build can always be previewed.
 - When `--set`/`--local-file` overrides are active, `run` envelopes include `"overrides": {name: path}` and `"ephemeral": true`.
 
