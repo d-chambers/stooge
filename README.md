@@ -59,6 +59,7 @@ stooge info my_project --json
 
 Use `--backend python` to run tasks with the interpreter that launched Stooge.
 `info` is read-only and can inspect a project before its manifest exists.
+`stooge --version` (or `stooge version`) prints the installed Stooge version.
 
 Parsing rejects dynamic path expressions, duplicate task IDs, duplicate output
 producers, dependency cycles, tasks without outputs, and outputs outside the
