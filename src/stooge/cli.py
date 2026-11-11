@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Annotated
 
@@ -190,6 +191,9 @@ def run(
         if path is not None:
             raise typer.BadParameter("--all takes no task ID", param_hint="TASK_ID")
         path = None if task_id is None else Path(task_id)
+        if task_id and re.fullmatch(r"[a-z]\d{3}", task_id) and not path.is_dir():
+            # A task ID given out of habit, not a project path.
+            raise typer.BadParameter("--all takes no task ID", param_hint="TASK_ID")
         task_id = None
     elif task_id is None:
         raise typer.BadParameter("give a task ID or --all", param_hint="TASK_ID")
