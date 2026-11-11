@@ -80,7 +80,7 @@ its newest input is newer than its oldest output. Script mtimes alone do not
 trigger work. A `local.py` edit only rebuilds tasks whose parsed definitions
 change. When an upstream task runs, affected downstream tasks are rebuilt.
 
-Outputs produced by running a script directly (outside `stooge run`) are reported as `not_recorded`: Stooge has no record of which script version built them, so the task is rerun once and recorded.
+When a task's outputs exist but Stooge has no recorded successful run for it (for example, the script was only ever run directly), the task is reported as `not_recorded` and rerun once to record its fingerprints.
 
 - `--dry-run` reports the ordered plan and a reason for each task without
   writing the manifest or outputs.
