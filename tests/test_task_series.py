@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
+from typer import BadParameter
 from typer.testing import CliRunner
 
 from stooge.cli import app
@@ -12,7 +13,7 @@ from stooge.exceptions import StoogeParseError
 from stooge.info import info
 from stooge.project import Project, load_project
 from stooge.remove import remove_task_outputs
-from stooge.runner import RunReason, run_project
+from stooge.runner import RunReason, plan_run, run_project
 
 runner = CliRunner()
 
@@ -282,3 +283,70 @@ class TestExistingProjects:
         before = manifest.read_text()
         assert run_project(workflow_project, "a030").executed == ()
         assert manifest.read_text() == before
+
+
+class TestRunAll:
+    """Tests that --all builds every task across independent series."""
+
+    @pytest.fixture
+    def two_branches(self, tmp_path):
+        """Return a project with an a branch and a b branch that never meet."""
+        # Declared out of order so dictionary order cannot produce a false pass.
+        tasks = {"b010": ("raw",), "a020": ("a010_out",), "a010": ("raw",)}
+        return _make_project(tmp_path / "proj", tasks)
+
+    def test_plan_without_target_covers_every_task(self, two_branches):
+        """Plan every task in execution order when no target is given."""
+        plan = plan_run(load_project(two_branches), None)
+        assert plan.target is None
+        assert plan.task_ids == ("a010", "a020", "b010")
+
+    def test_force_without_target_reruns_every_task(self, two_branches):
+        """Treat every task as a target, so force reruns all of them."""
+        run_project(two_branches, None)
+        plan = plan_run(load_project(two_branches), None, force=True)
+        assert plan.task_ids == ("a010", "a020", "b010")
+        assert set(plan.reasons.values()) == {RunReason.FORCED}
+
+    def test_run_all_then_noop(self, two_branches):
+        """Build both branches once and find them current on the next run."""
+        assert run_project(two_branches, None).executed == ("a010", "a020", "b010")
+        assert run_project(two_branches, None).executed == ()
+
+    def test_run_all_rebuilds_only_stale_branch(self, two_branches):
+        """Rerun only the branch whose output went missing."""
+        run_project(two_branches, None)
+        (two_branches / "outputs/a020_out.txt").unlink()
+        assert run_project(two_branches, None).executed == ("a020",)
+
+    def test_dry_run_json(self, two_branches):
+        """Preview the combined plan through the CLI without building."""
+        payload = _run_cli("run", "--all", str(two_branches), "--dry-run")
+        assert payload["ok"] is True
+        assert payload["target"] is None
+        assert payload["planned"] == ["a010", "a020", "b010"]
+        assert not (two_branches / "outputs").exists()
+
+    def test_run_from_cwd(self, two_branches, monkeypatch):
+        """Use the current directory when --all is given no path."""
+        monkeypatch.chdir(two_branches)
+        first = runner.invoke(app, ["run", "--all"])
+        second = runner.invoke(app, ["run", "--all"])
+        assert first.exit_code == 0
+        assert "b010 (missing_output)" in first.stdout
+        assert second.stdout.strip() == "All tasks are up to date"
+
+    def test_task_id_with_all_is_rejected(self, two_branches):
+        """Refuse a task ID together with --all instead of guessing intent."""
+        args = ["run", "a010", str(two_branches), "--all"]
+        # Raise instead of rendering, since CI may style the usage message.
+        result = runner.invoke(app, args, standalone_mode=False)
+        assert isinstance(result.exception, BadParameter)
+        assert "--all takes no task ID" in str(result.exception)
+
+    def test_missing_target_is_usage_error(self, two_branches, monkeypatch):
+        """Ask for a task ID or --all when neither is given."""
+        monkeypatch.chdir(two_branches)
+        result = runner.invoke(app, ["run"], standalone_mode=False)
+        assert isinstance(result.exception, BadParameter)
+        assert "give a task ID or --all" in str(result.exception)

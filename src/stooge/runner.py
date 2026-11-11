@@ -67,7 +67,7 @@ class RunReason(str, Enum):
 class RunPlan:
     """Describe ordered tasks and reasons for a target closure."""
 
-    target: str
+    target: str | None
     task_ids: tuple[str, ...]
     reasons: dict[str, RunReason]
 
@@ -76,7 +76,7 @@ class RunPlan:
 class RunReport:
     """Describe planned and successfully executed tasks."""
 
-    target: str
+    target: str | None
     planned: tuple[str, ...]
     executed: tuple[str, ...]
     reasons: dict[str, RunReason]
@@ -85,17 +85,23 @@ class RunReport:
 
 def plan_run(
     project: Project,
-    target: str,
+    target: str | None,
     *,
     force: bool = False,
     force_all: bool = False,
     strict_inputs: bool = True,
     check_fingerprints: bool = True,
 ) -> RunPlan:
-    """Return the upstream tasks needed to build a target and their reasons."""
-    if target not in project.tasks:
+    """
+    Return the upstream tasks needed to build a target and their reasons.
+
+    A ``target`` of ``None`` makes every project task a target, so the plan
+    covers the whole project and ``force`` reruns every task.
+    """
+    if target is not None and target not in project.tasks:
         raise StoogeTaskNotFoundError(f"Unknown task ID: {target}")
-    closure = _upstream_closure(project, target)
+    targets = set(project.tasks) if target is None else {target}
+    closure = _upstream_closure(project, targets)
     order = [task_id for task_id in project.execution_order() if task_id in closure]
     natural_reasons = {
         task_id: task_stale_reason(
@@ -119,8 +125,8 @@ def plan_run(
             for task_id, reason in natural_reasons.items()
         }
         if force:
-            scheduled.add(target)
-            reasons[target] = RunReason.FORCED
+            scheduled |= targets
+            reasons.update(dict.fromkeys(targets, RunReason.FORCED))
 
         # A rebuilt producer makes every consumer on the target path stale.
         for task_id in order:
@@ -138,7 +144,7 @@ def plan_run(
 
 def run_project(
     path: str | Path,
-    target: str,
+    target: str | None,
     *,
     force: bool = False,
     force_all: bool = False,
@@ -146,7 +152,11 @@ def run_project(
     dry_run: bool = False,
     overrides: dict[str, Path] | None = None,
 ) -> RunReport:
-    """Load a project, plan a target, and optionally execute selected tasks."""
+    """
+    Load a project, plan a target, and optionally execute selected tasks.
+
+    Pass ``target=None`` to plan and run every task in the project.
+    """
     overrides = dict(overrides or {})
     if overrides:
         # Overridden runs are ephemeral: parse fresh and never persist.
@@ -267,10 +277,10 @@ def task_stale_reason(
     return None
 
 
-def _upstream_closure(project: Project, target: str) -> set[str]:
-    """Return a target task and all of its transitive dependencies."""
+def _upstream_closure(project: Project, targets: set[str]) -> set[str]:
+    """Return target tasks and all of their transitive dependencies."""
     output: set[str] = set()
-    pending = [target]
+    pending = list(targets)
     while pending:
         task_id = pending.pop()
         if task_id in output:

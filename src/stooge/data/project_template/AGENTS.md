@@ -19,8 +19,9 @@ remain directly executable in dependency order.
   Other `local.py` paths referenced by that script are inputs.
 
 Use `stooge parse` to validate, `stooge run <task> --dry-run --json` to inspect
-a build plan, `stooge run <task>` to build, `stooge remove <task>` to clear its
-outputs, and `stooge info --json` to inspect project state.
+a build plan, `stooge run <task>` to build, `stooge run --all` to build every
+task, `stooge remove <task>` to clear its outputs, and `stooge info --json` to
+inspect project state.
 
 To debug a task with alternate paths, override `local.py` values for one run:
 `stooge run <task> --set output_path=<scratch-dir> [--set input_path=...]`.

@@ -76,7 +76,11 @@ required:
 stooge run a030 my_project --dry-run
 stooge run a030 my_project
 stooge run a030 my_project --json
+stooge run --all my_project --dry-run
+stooge run --all my_project
 ```
+
+`--all` makes every task a target, so one command brings independent branches and series up to date without an aggregator task. It takes no task ID; its optional positional argument is the project path. The combined plan follows the usual execution order, and JSON envelopes report `"target": null`.
 
 A task is stale when an output is missing, the content hash of its script or of a project module it imports changed (reported as `script_changed`), or its newest input is newer than its oldest output. Script and module mtimes alone do not trigger work. A `local.py` edit only rebuilds tasks whose parsed definitions change. When an upstream task runs, affected downstream tasks are rebuilt.
 
@@ -86,7 +90,7 @@ package never makes its consumers stale.
 
 - `--dry-run` reports the ordered plan and a reason for each task without
   writing the manifest or outputs.
-- `--force` always reruns the target in addition to stale dependencies.
+- `--force` always reruns the target in addition to stale dependencies; with `--all`, every task is a target and is rerun.
 - `--force-all` reruns the target's entire upstream closure.
 - `--debug` executes selected scripts under the standard-library debugger.
 

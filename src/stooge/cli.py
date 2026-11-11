@@ -145,8 +145,15 @@ def parse(
 
 @app.command("run")
 def run(
-    task_id: Annotated[str, typer.Argument()],
+    task_id: Annotated[str | None, typer.Argument()] = None,
     path: Annotated[Path | None, typer.Argument()] = None,
+    all_tasks: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="Build every task instead of one target; takes no task ID.",
+        ),
+    ] = False,
     force: Annotated[bool, typer.Option("--force")] = False,
     force_all: Annotated[bool, typer.Option("--force-all")] = False,
     debug: Annotated[bool, typer.Option("--debug")] = False,
@@ -177,7 +184,15 @@ def run(
     ] = None,
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ):
-    """Run or preview stale tasks needed to build a target task."""
+    """Run or preview stale tasks needed to build a target task, or all tasks."""
+    if all_tasks:
+        # With --all there is no target, so the only positional is the path.
+        if path is not None:
+            raise typer.BadParameter("--all takes no task ID", param_hint="TASK_ID")
+        path = None if task_id is None else Path(task_id)
+        task_id = None
+    elif task_id is None:
+        raise typer.BadParameter("give a task ID or --all", param_hint="TASK_ID")
     project_path = path if path is not None else Path.cwd()
     try:
         overrides = resolve_overrides(project_path, set_, local_file)
@@ -219,7 +234,11 @@ def run(
         )
         typer.echo(f"Overrides (ephemeral): {rendered}")
     if not report.planned:
-        typer.echo(f"{task_id} is up to date")
+        typer.echo(
+            "All tasks are up to date"
+            if task_id is None
+            else f"{task_id} is up to date"
+        )
         return
     verb = "Would execute" if dry_run else "Executed"
     selected = ", ".join(
