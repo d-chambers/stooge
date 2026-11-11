@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
+from typer import BadParameter
 from typer.testing import CliRunner
 
 from stooge.cli import app
@@ -337,13 +338,15 @@ class TestRunAll:
 
     def test_task_id_with_all_is_rejected(self, two_branches):
         """Refuse a task ID together with --all instead of guessing intent."""
-        result = runner.invoke(app, ["run", "a010", str(two_branches), "--all"])
-        assert result.exit_code == 2
-        assert "--all takes no task ID" in result.output
+        args = ["run", "a010", str(two_branches), "--all"]
+        # Raise instead of rendering, since CI may style the usage message.
+        result = runner.invoke(app, args, standalone_mode=False)
+        assert isinstance(result.exception, BadParameter)
+        assert "--all takes no task ID" in str(result.exception)
 
     def test_missing_target_is_usage_error(self, two_branches, monkeypatch):
         """Ask for a task ID or --all when neither is given."""
         monkeypatch.chdir(two_branches)
-        result = runner.invoke(app, ["run"])
-        assert result.exit_code == 2
-        assert "give a task ID or --all" in result.output
+        result = runner.invoke(app, ["run"], standalone_mode=False)
+        assert isinstance(result.exception, BadParameter)
+        assert "give a task ID or --all" in str(result.exception)
